@@ -105,7 +105,7 @@ In the code above, you have:
 5. **Redacted the CRM token** from state views and from the recorded arguments of `connectCrm`.
 
 > [!NOTE]
-> Actions run one at a time. While a real model call is in flight, other calls to the same customer's agent wait. That's usually what you want for one conversation. For agents that run long, multi-step jobs, consider a dedicated agent runtime hosted as a [raw Durable Object](../api/durable.md).
+> Actions run one at a time. While a real model call is in flight, other calls to the same customer's agent wait. That's usually what you want for one conversation. For agents that run long, multi-step jobs, consider a dedicated agent runtime hosted as a [custom class](../api/durable.md).
 
 ## 3. Expose it over HTTP
 
@@ -181,4 +181,4 @@ By finishing this tutorial, you have:
 
 - [Rules of actors: side effects](../best-practices/rules-of-actors.md#make-side-effects-safe-to-repeat)
 - [Action context: `schedule`](../api/action-context.md#schedule)
-- [`durable()`](../api/durable.md): hosting an agent runtime as a raw Durable Object
+- [Custom classes](../api/durable.md): hosting a dedicated agent runtime

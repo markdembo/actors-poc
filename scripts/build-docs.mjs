@@ -46,7 +46,7 @@ const NAV = [
       ["Action context", "api/action-context.md"],
       ["Connections", "api/connections.md"],
       ["Errors", "api/errors.md"],
-      ["durable()", "api/durable.md"],
+      ["Custom classes", "api/durable.md"],
     ],
   },
   {

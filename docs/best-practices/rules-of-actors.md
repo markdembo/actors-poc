@@ -3,7 +3,7 @@
 > [!WARNING]
 > **Unofficial, AI-generated proof of concept.** This is not Cloudflare documentation, and the project has no support. Read the [warning in the project README](../../README.md) before using any of it.
 
-Actors remove a lot of Durable Objects plumbing, but not the distributed-systems facts underneath it. This is a guide to designing actors that stay fast, consistent and debuggable. Each rule explains why, then shows a recommended (✅) and a discouraged (🔴) version.
+Actors make stateful code simple to write, but they don't change the distributed-systems facts underneath. This is a guide to designing actors that stay fast, consistent and debuggable. Each rule explains why, then shows a recommended (✅) and a discouraged (🔴) version.
 
 ## Design
 
@@ -125,7 +125,7 @@ online: ({ state }) => state.online,
 
 ### Keep actions short
 
-Actions on one instance run one at a time. A 20-second model call blocks every other action on that instance, including reads, for 20 seconds. Keep slow I/O out of hot paths, or move it to a [scheduled action](../api/action-context.md#schedule). For work that runs for minutes, use a raw Durable Object with a runtime built for it. Refer to [`durable()`](../api/durable.md).
+Actions on one instance run one at a time. A 20-second model call blocks every other action on that instance, including reads, for 20 seconds. Keep slow I/O out of hot paths, or move it to a [scheduled action](../api/action-context.md#schedule). For work that runs for minutes, use a [custom class](../api/durable.md) with a runtime built for it.
 
 ### Never await your own actor
 
@@ -253,4 +253,3 @@ Retry only when `err.kind === "transport" && err.retryable`, only for actions th
 - [WebSockets best practices](websockets.md)
 - [Semantics](../semantics.md)
 - [Limits](../reference/limits.md)
-- [Rules of Durable Objects](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/) ↗: the platform-level guide this page builds on.

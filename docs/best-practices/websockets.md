@@ -100,4 +100,3 @@ Every message is one transactional action, and every broadcast is one send per s
 - [Build a chat room](../tutorials/build-a-chat-room.md)
 - [Connections API](../api/connections.md)
 - [Semantics: WebSockets](../semantics.md#websockets)
-- [Durable Objects: WebSockets](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) ↗

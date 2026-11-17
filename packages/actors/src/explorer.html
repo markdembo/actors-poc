@@ -151,7 +151,7 @@ function renderSide() {
     html += "</div>";
   }
   if (objects.length) {
-    html += "<h2>Durable Objects</h2>";
+    html += "<h2>Custom classes</h2>";
     for (const o of objects) {
       html += '<div class="type"><div class="type-name">' + esc(o.class) + "<small>" + esc(o.binding) + "</small></div>";
       if (!o.instances.length) html += '<div class="empty">No instances yet</div>';
@@ -298,7 +298,7 @@ async function loadObject() {
     if (doTable) rows = await api(base + "/tables/" + encodeURIComponent(doTable) + "?limit=" + PAGE + "&offset=" + doOffset);
   } catch (e) { $("#main").innerHTML = '<div class="card result err"><pre>' + esc(e.message) + "</pre></div>"; return; }
 
-  let html = '<div class="ident"><span class="kind">DURABLE OBJECT</span><span class="t">' + esc(d.class) + "</span>" +
+  let html = '<div class="ident"><span class="kind">CUSTOM CLASS</span><span class="t">' + esc(d.class) + "</span>" +
     '<span class="k">' + esc(d.name !== null ? '"' + d.name + '"' : d.id.slice(0, 16) + "…") + '</span><span class="pill">read-only</span>' +
     '<span class="actions"><button class="btn" id="refresh">Refresh</button></span></div>';
   html += '<div class="card"><h3>Tables <span class="pill">' + d.tables.length + "</span></h3>";

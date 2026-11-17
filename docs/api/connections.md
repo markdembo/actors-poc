@@ -3,7 +3,7 @@
 > [!WARNING]
 > **Unofficial, AI-generated proof of concept.** This is not Cloudflare documentation, and the project has no support. Read the [warning in the project README](../../README.md) before using any of it.
 
-Add `connections` to an actor to accept WebSockets through [`Actor.connect()`](actor.md#connect). Each hook runs like an action: queued with the instance's other actions, committed atomically, and rolled back if it throws. Sockets are accepted through the [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) ↗, so an idle instance can leave memory without closing them.
+Add `connections` to an actor to accept WebSockets through [`Actor.connect()`](actor.md#connect). Each hook runs like an action: queued with the instance's other actions, committed atomically, and rolled back if it throws. Sockets hibernate: an idle actor can be unloaded from memory without closing them, and the next message wakes it.
 
 ```ts
 import { actor, typed } from "actors-poc";

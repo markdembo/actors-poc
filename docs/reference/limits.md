@@ -22,11 +22,11 @@ These limits are set by this framework.
 
 ## Platform limits
 
-Every actor instance is a Durable Object. Cloudflare's [Durable Objects limits](https://developers.cloudflare.com/durable-objects/platform/limits/) ↗ apply, including:
+Actors run on Cloudflare Durable Objects, so each actor is subject to the [Durable Objects limits](https://developers.cloudflare.com/durable-objects/platform/limits/) ↗. The ones you are most likely to meet:
 
-- **Throughput:** about a thousand simple requests per second per instance (a soft limit). Past that, calls fail as overloaded, which appears as a `transport` error.
-- **Storage:** 10 GB per instance, and 8 MB per SQLite value.
+- **Throughput:** about a thousand simple requests per second per actor (a soft limit). Past that, calls fail as overloaded, which appears as a `transport` error.
+- **Storage:** 10 GB per actor, and 8 MB per SQLite value.
 - **CPU:** 30 seconds per request by default, configurable up to 5 minutes. Each WebSocket message resets the budget.
-- **WebSockets:** up to 32,768 hibernatable connections per instance, fewer in practice, and 32 MiB per incoming message.
+- **WebSockets:** up to 32,768 hibernatable connections per actor, fewer in practice, and 32 MiB per incoming message.
 
 The platform figures above were read from Cloudflare's documentation in November 2026. Check that page for current values.

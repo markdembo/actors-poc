@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Actors · unofficial proof of concept</title>
-<meta name="description" content="Build stateful TypeScript services on Durable Objects without writing Durable Object classes, bindings or migrations.">
+<meta name="description" content="Actors is a TypeScript framework for building stateful backends on Cloudflare Workers.">
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="assets/style.css">
 <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
@@ -19,14 +19,14 @@
 </header>
 <div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
 <div class="layout">
-  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="index.html" aria-current="page" class="active">Overview</a></li><li><a href="get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="concepts/what-are-actors.html">What are actors?</a></li><li><a href="concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="api/index.html">API reference</a></li><li><a href="api/actor.html">actor()</a></li><li><a href="api/action-context.html">Action context</a></li><li><a href="api/connections.html">Connections</a></li><li><a href="api/errors.html">Errors</a></li><li><a href="api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="reference/cli.html">CLI</a></li><li><a href="reference/configuration.html">Configuration</a></li><li><a href="reference/limits.html">Limits</a></li><li><a href="semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="findings.html">Findings</a></li></ul></div></nav>
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="index.html" aria-current="page" class="active">Overview</a></li><li><a href="get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="concepts/what-are-actors.html">What are actors?</a></li><li><a href="concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="api/index.html">API reference</a></li><li><a href="api/actor.html">actor()</a></li><li><a href="api/action-context.html">Action context</a></li><li><a href="api/connections.html">Connections</a></li><li><a href="api/errors.html">Errors</a></li><li><a href="api/durable.html">Custom classes</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="reference/cli.html">CLI</a></li><li><a href="reference/configuration.html">Configuration</a></li><li><a href="reference/limits.html">Limits</a></li><li><a href="semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="findings.html">Findings</a></li></ul></div></nav>
   <main class="content">
     
     <article><h1>Actors (proof of concept)</h1>
 <aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
 </aside>
-<p>Build stateful TypeScript services on Durable Objects without writing Durable Object classes, bindings or migrations.</p>
-<p>An actor is a typed, stateful service with one instance per key: one per customer, cart, chat room or AI agent. You define its state and its actions. The framework runs each instance in a Durable Object, saves its state transactionally, and gives you a typed client to call it from your Worker.</p>
+<p>Actors is a TypeScript framework for building stateful backends on Cloudflare Workers.</p>
+<p>An actor is a small service that owns its own state. You create one for each thing your app cares about, such as a customer, a cart, a chat room or an AI agent, and call it by name from anywhere in your app. Each actor remembers everything between calls, handles one request at a time, and never leaves a half-finished change behind.</p>
 <p>Use actors to build:</p>
 <ul>
 <li>Per-customer or per-tenant services with isolated state.</li>
@@ -36,39 +36,37 @@
 </ul>
 <p><strong><a href="get-started.html">Get started</a></strong></p>
 <h3 id="what-is-an-actor"><a class="anchor" href="#what-is-an-actor" aria-label="Link to this section">#</a>What is an actor?</h3>
-<p>An actor is a Durable Object you never have to write by hand:</p>
+<p>An actor combines three things you would otherwise assemble yourself:</p>
 <ul>
-<li><strong>Defined, not subclassed.</strong> You write <code>actor({ state, actions })</code>. There is no class, binding, migration, ID or stub in your code.</li>
-<li><strong>Transactional.</strong> Each action works on a private copy of the state. It is saved atomically when the action returns and discarded when it throws.</li>
-<li><strong>One at a time.</strong> Actions on one instance run in arrival order, so you never write locks.</li>
-<li><strong>Typed end to end.</strong> <code>Counter.get(&quot;customer-123&quot;).increment(5)</code> is checked at compile time, from method name to return type.</li>
+<li><strong>An identity.</strong> <code>Cart.get(&quot;alice&quot;)</code> always reaches the same actor, from any request, anywhere.</li>
+<li><strong>Private state.</strong> Only the actor&#39;s own actions can read or change it. The state survives restarts and deploys.</li>
+<li><strong>One request at a time.</strong> Calls to one actor are handled in order, so two requests can never overwrite each other&#39;s changes. You never write locks.</li>
 </ul>
+<p>On top of that, every action is a transaction: its changes are saved together when it succeeds and discarded when it throws. And calls are typed end to end: <code>Cart.get(&quot;alice&quot;).add(&quot;sku-1&quot;, 2)</code> is checked at compile time, from method name to return type.</p>
 <p>Refer to <a href="concepts/what-are-actors.html">What are actors?</a> to learn more.</p>
 <h2 id="features"><a class="anchor" href="#features" aria-label="Link to this section">#</a>Features</h2>
 <h4 id="transactional-stateconceptshow-actors-workmdstate-and-transactions"><a class="anchor" href="#transactional-stateconceptshow-actors-workmdstate-and-transactions" aria-label="Link to this section">#</a><a href="concepts/how-actors-work.html#state-and-transactions">Transactional state</a></h4>
-<p>State is a JSON document per instance, committed atomically, together with scheduled work and an invocation log.</p>
+<p>Each actor&#39;s state is saved atomically, together with its scheduled work and its activity log. A failed action changes nothing.</p>
 <h4 id="websocketsbest-practiceswebsocketsmd"><a class="anchor" href="#websocketsbest-practiceswebsocketsmd" aria-label="Link to this section">#</a><a href="best-practices/websockets.html">WebSockets</a></h4>
-<p>Connection hooks run as actions. Messages go out only after the change that produced them is saved.</p>
+<p>Clients connect straight to an actor. Messages go out only after the change that produced them is saved.</p>
 <h4 id="schedulingapiaction-contextmdschedule"><a class="anchor" href="#schedulingapiaction-contextmdschedule" aria-label="Link to this section">#</a><a href="api/action-context.html#schedule">Scheduling</a></h4>
 <p>Run an action later, at least once, with retries. Scheduling is part of the same transaction as the action that requests it.</p>
 <h4 id="actor-explorerreferenceclimdactor-explorer"><a class="anchor" href="#actor-explorerreferenceclimdactor-explorer" aria-label="Link to this section">#</a><a href="reference/cli.html#actor-explorer">Actor Explorer</a></h4>
-<p>A local web UI and CLI to list instances, read their state, replay actions and trace failures.</p>
-<h4 id="zero-config-durable-objectsapidurablemd"><a class="anchor" href="#zero-config-durable-objectsapidurablemd" aria-label="Link to this section">#</a><a href="api/durable.html">Zero-config Durable Objects</a></h4>
-<p>Need a real Durable Object class? Export it, and the CLI wires up its binding and migration, with a typed <code>durable(Class).get(name)</code>.</p>
+<p>A local web UI and CLI to list actors, read their state, invoke actions and trace failures.</p>
+<h4 id="custom-classesapidurablemd"><a class="anchor" href="#custom-classesapidurablemd" aria-label="Link to this section">#</a><a href="api/durable.html">Custom classes</a></h4>
+<p>When an actor isn&#39;t the right shape, write your own class with full control over storage, and keep the zero-config setup and typed client.</p>
 <h2 id="related-products"><a class="anchor" href="#related-products" aria-label="Link to this section">#</a>Related products</h2>
-<p><strong><a href="https://developers.cloudflare.com/durable-objects/" target="_blank" rel="noopener">Durable Objects</a> ↗</strong>
-The platform every actor instance runs on. Each instance is one Durable Object with its own SQLite storage.</p>
 <p><strong><a href="https://developers.cloudflare.com/workers/" target="_blank" rel="noopener">Workers</a> ↗</strong>
-Your app&#39;s entry point. Your Worker calls actors and hands WebSocket upgrades to them.</p>
+Your app&#39;s entry point and the runtime actors run in. Your Worker calls actors and hands WebSocket connections to them.</p>
 <p><strong><a href="https://developers.cloudflare.com/workers/wrangler/" target="_blank" rel="noopener">Wrangler</a> ↗</strong>
-The CLI that the <code>actors</code> CLI generates configuration for and delegates to.</p>
+The Cloudflare CLI. The <code>actors</code> CLI generates its configuration and uses it to run and deploy your app.</p>
 <h2 id="more-resources"><a class="anchor" href="#more-resources" aria-label="Link to this section">#</a>More resources</h2>
 <h4 id="get-startedget-startedmd"><a class="anchor" href="#get-startedget-startedmd" aria-label="Link to this section">#</a><a href="get-started.html">Get started</a></h4>
 <p>Build and run a shopping cart actor locally in about ten minutes.</p>
 <h4 id="rules-of-actorsbest-practicesrules-of-actorsmd"><a class="anchor" href="#rules-of-actorsbest-practicesrules-of-actorsmd" aria-label="Link to this section">#</a><a href="best-practices/rules-of-actors.html">Rules of actors</a></h4>
 <p>How to design actors, keep state healthy, handle side effects and errors.</p>
 <h4 id="api-referenceapireadmemd"><a class="anchor" href="#api-referenceapireadmemd" aria-label="Link to this section">#</a><a href="api/index.html">API reference</a></h4>
-<p><code>actor()</code>, the action context, connections, errors and <code>durable()</code>.</p>
+<p><code>actor()</code>, the action context, connections, errors and custom classes.</p>
 <h4 id="semanticssemanticsmd"><a class="anchor" href="#semanticssemanticsmd" aria-label="Link to this section">#</a><a href="semantics.html">Semantics</a></h4>
 <p>The exact guarantees for persistence, concurrency, failures, scheduling and WebSockets.</p>
 <h4 id="findingsfindingsmd"><a class="anchor" href="#findingsfindingsmd" aria-label="Link to this section">#</a><a href="findings.html">Findings</a></h4>

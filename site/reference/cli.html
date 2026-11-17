@@ -19,7 +19,7 @@
 </header>
 <div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
 <div class="layout">
-  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="cli.html" aria-current="page" class="active">CLI</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">Custom classes</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="cli.html" aria-current="page" class="active">CLI</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
   <main class="content">
     <p class="crumb">Reference</p>
     <article><h1>CLI</h1>
@@ -32,14 +32,14 @@
 <p>Finds everything under <code>src/</code> that the framework manages:</p>
 <ul>
 <li>actors, written as <code>export const X = actor(</code></li>
-<li>raw Durable Object classes, written as <code>export class X extends DurableObject</code></li>
+<li>custom classes, written as <code>export class X extends DurableObject</code></li>
 </ul>
 <p>Then it writes:</p>
 <ul>
 <li><code>.actors/entry.ts</code>: the production entry point.</li>
 <li><code>.actors/entry.dev.ts</code>: the development entry point, with the Actor Explorer.</li>
 <li><code>.actors/manifest.json</code>: what was discovered.</li>
-<li><code>wrangler.jsonc</code>: creates the file, or edits it in place, keeping your settings and comments. It sets <code>main</code>, adds the <code>ACTORS</code> binding and the <code>actors-v1</code> migration, and adds one binding and migration per Durable Object class.</li>
+<li><code>wrangler.jsonc</code>: creates the file, or edits it in place, keeping your settings and comments. It sets <code>main</code>, adds the <code>ACTORS</code> binding and the <code>actors-v1</code> migration, and adds one binding and migration per custom class.</li>
 </ul>
 <p>Running it twice changes nothing. It fails with an explanation when:</p>
 <ul>
@@ -77,14 +77,14 @@
 <ul>
 <li><strong>Actor types and instances.</strong> Every instance in local storage, read through Wrangler&#39;s Local Explorer API. Instances with recent failures are flagged.</li>
 <li><strong>Instance view.</strong> Saved state with the last change highlighted, an action console that takes JSON arguments, the activity timeline with stack traces and logs, storage size, runtime info, open connections, and pending schedules. You can delete an instance&#39;s storage from here.</li>
-<li><strong>Durable Objects.</strong> Instances of your raw Durable Object classes, with a read-only, paged view of their SQLite tables. Opening one starts it if it wasn&#39;t running.</li>
+<li><strong>Custom classes.</strong> Instances of your <a href="../api/durable.html">custom classes</a>, with a read-only, paged view of their SQLite tables. Opening one starts it if it wasn&#39;t running.</li>
 </ul>
 <p>The Explorer reads storage through Wrangler&#39;s Local Explorer API (<code>/cdn-cgi/local/explorer/api</code>). It requires Wrangler 4.163 or later, and it doesn&#39;t work if <code>X_LOCAL_EXPLORER</code> is set to <code>false</code>.</p>
 <aside class="callout callout-caution" role="note"><p class="callout-title">Caution</p><p><code>redact</code> hides values in the Actor Explorer and <code>actors inspect</code> only. Wrangler&#39;s Local Explorer API exposes raw local storage to anything that can reach your dev server.</p>
 </aside>
 </article>
     <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/reference/cli.md" target="_blank" rel="noopener">View source ↗</a></p>
-    <nav class="pager" aria-label="Pagination"><a class="prev" href="../api/durable.html"><span>Previous</span>durable()</a><a class="next" href="configuration.html"><span>Next</span>Configuration</a></nav>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="../api/durable.html"><span>Previous</span>Custom classes</a><a class="next" href="configuration.html"><span>Next</span>Configuration</a></nav>
     <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
   </main>
   <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#generate">generate</a></li><li class="d2"><a href="#dev">dev</a></li><li class="d2"><a href="#deploy">deploy</a></li><li class="d2"><a href="#inspect">inspect</a></li><li class="d2"><a href="#list">list</a></li><li class="d2"><a href="#actor-explorer">Actor Explorer</a></li></ul></aside>

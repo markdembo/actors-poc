@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>durable() · Actors (unofficial PoC)</title>
-<meta name="description" content="Sometimes you need a real Durable Object class:">
+<title>Custom classes · Actors (unofficial PoC)</title>
+<meta name="description" content="Most stateful code fits an actor. When it doesn't, write your own class and keep the zero-config setup and typed client. Reach for a custom class when you need:">
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="../assets/style.css">
 <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
@@ -19,21 +19,21 @@
 </header>
 <div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
 <div class="layout">
-  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="index.html">API reference</a></li><li><a href="actor.html">actor()</a></li><li><a href="action-context.html">Action context</a></li><li><a href="connections.html">Connections</a></li><li><a href="errors.html">Errors</a></li><li><a href="durable.html" aria-current="page" class="active">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="index.html">API reference</a></li><li><a href="actor.html">actor()</a></li><li><a href="action-context.html">Action context</a></li><li><a href="connections.html">Connections</a></li><li><a href="errors.html">Errors</a></li><li><a href="durable.html" aria-current="page" class="active">Custom classes</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
   <main class="content">
     <p class="crumb">API</p>
-    <article><h1>durable()</h1>
+    <article><h1>Custom classes</h1>
 <aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
 </aside>
-<p>Sometimes you need a real Durable Object class:</p>
+<p>Most stateful code fits an actor. When it doesn&#39;t, write your own class and keep the zero-config setup and typed client. Reach for a custom class when you need:</p>
 <ul>
 <li>a library that brings its own durability, such as an agent runtime</li>
 <li>your own SQLite schema</li>
 <li>streaming responses</li>
 <li>per-class platform settings</li>
 </ul>
-<p>Write the class as usual. <code>actors generate</code> wires it up, and <code>durable()</code> gives you a typed stub.</p>
-<h2 id="zero-config-classes"><a class="anchor" href="#zero-config-classes" aria-label="Link to this section">#</a>Zero-config classes</h2>
+<p>A custom class is a <a href="https://developers.cloudflare.com/durable-objects/" target="_blank" rel="noopener">Cloudflare Durable Object</a> ↗ class: you write it with the Durable Objects API, and it gets none of the actor features such as transactional state, the action queue or the activity log. <code>actors generate</code> wires it up, and <code>durable()</code> gives you a typed client.</p>
+<h2 id="zero-config-setup"><a class="anchor" href="#zero-config-setup" aria-label="Link to this section">#</a>Zero-config setup</h2>
 <p>Any class declared as <code>export class X extends DurableObject</code> in a file under <code>src/</code> is discovered. For each one, <code>actors generate</code>:</p>
 <ol>
 <li>Adds a binding named after the class, in UPPER_SNAKE_CASE: <code>Session</code> → <code>SESSION</code>, <code>ChatRoom</code> → <code>CHAT_ROOM</code>. If you already wrote a binding for the class in <code>wrangler.jsonc</code>, yours is used.</li>
@@ -44,7 +44,7 @@
 <p>It never deletes anything. If a class it bound disappears from <code>src/</code>, <code>generate</code> warns and explains how to remove the class on purpose with a <code>deleted_classes</code> migration. If the binding name would clash with another binding, <code>generate</code> stops and tells you to name the binding yourself.</p>
 <aside class="callout callout-note" role="note"><p class="callout-title">Note</p><p>Only <code>extends DurableObject</code> is detected, and only when declared with <code>export class</code>. For classes that extend another base, such as an Agents SDK <code>Agent</code>, write the binding and migration yourself and export the class from <code>src/index.ts</code>.</p>
 </aside>
-<h2 id="durable-1"><a class="anchor" href="#durable-1" aria-label="Link to this section">#</a><code>durable</code></h2>
+<h2 id="durable"><a class="anchor" href="#durable" aria-label="Link to this section">#</a><code>durable</code></h2>
 <p><code>durable&lt;T&gt;(cls: abstract new (ctx: DurableObjectState, env: any) =&gt; T)</code>: <code>DurableRef&lt;T&gt;</code></p>
 <h4 id="parameters"><a class="anchor" href="#parameters" aria-label="Link to this section">#</a>Parameters</h4>
 <ul>
@@ -88,8 +88,8 @@
   },
 };</code></pre></figure>
 <p>The <a href="https://github.com/markdembo/actors-poc/tree/main/examples/pi-session" target="_blank" rel="noopener"><code>examples/pi-session</code></a> example hosts a <a href="https://www.npmjs.com/package/@earendil-works/pi-durable" target="_blank" rel="noopener">pi-durable</a> ↗ agent session this way.</p>
-<h2 id="actors-or-raw-durable-objects"><a class="anchor" href="#actors-or-raw-durable-objects" aria-label="Link to this section">#</a>Actors or raw Durable Objects?</h2>
-<p>Use an actor when the state fits in one JSON document and actions are short. Use a raw class when you need:</p>
+<h2 id="actors-or-custom-classes"><a class="anchor" href="#actors-or-custom-classes" aria-label="Link to this section">#</a>Actors or custom classes?</h2>
+<p>Use an actor when the state fits in one JSON document and actions are short. Use a custom class when you need:</p>
 <ul>
 <li>full control of storage</li>
 <li>long-running work</li>
@@ -99,14 +99,14 @@
 <h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
 <ul>
 <li><a href="../reference/configuration.html">Configuration</a></li>
-<li><a href="https://developers.cloudflare.com/durable-objects/api/base/" target="_blank" rel="noopener">Durable Objects: Base class</a> ↗</li>
+<li><a href="https://developers.cloudflare.com/durable-objects/api/base/" target="_blank" rel="noopener">Durable Objects: Base class</a> ↗: the API you write custom classes with</li>
 </ul>
 </article>
     <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/api/durable.md" target="_blank" rel="noopener">View source ↗</a></p>
     <nav class="pager" aria-label="Pagination"><a class="prev" href="errors.html"><span>Previous</span>Errors</a><a class="next" href="../reference/cli.html"><span>Next</span>CLI</a></nav>
     <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
   </main>
-  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#zero-config-classes">Zero-config classes</a></li><li class="d2"><a href="#durable-1">durable</a></li><li class="d2"><a href="#actors-or-raw-durable-objects">Actors or raw Durable Objects?</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#zero-config-setup">Zero-config setup</a></li><li class="d2"><a href="#durable">durable</a></li><li class="d2"><a href="#actors-or-custom-classes">Actors or custom classes?</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
 </div>
 <script src="../assets/site.js"></script>
 </body>

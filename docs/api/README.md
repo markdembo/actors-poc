@@ -13,6 +13,6 @@ import { actor, typed, durable, ActorError } from "actors-poc";
 - [Action context](action-context.md): what every action and hook receives as `ctx`.
 - [Connections](connections.md): WebSocket hooks, `Connection`, `typed()`.
 - [Errors](errors.md): `ActorError` and its kinds.
-- [`durable()`](durable.md): typed stubs for your own Durable Object classes.
+- [`durable()`](durable.md): custom classes, for when an actor isn't the right shape.
 
 For the command line, refer to the [CLI reference](../reference/cli.md).

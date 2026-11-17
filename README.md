@@ -8,7 +8,7 @@
 > - **No support.** No maintenance, no security fixes, no answers to issues. Use it at your own risk.
 > - **Not from Cloudflare.** This is **not** an official Cloudflare product, package, or documentation, and it is not endorsed, reviewed or supported by Cloudflare. "Cloudflare", "Workers" and "Durable Objects" refer to the platform it runs on.
 
-Durable Objects as plain, typed, stateful TypeScript services. You write the actor; the framework handles the Durable Object class, bindings, migrations, routing, persistence, and debugging tools.
+Actors is a TypeScript framework for building stateful backends on Cloudflare Workers. An actor is a small service that owns its own state: you create one per customer, cart, chat room or AI agent, and call it by name from anywhere in your app. It remembers everything between calls, handles one request at a time, and never leaves a half-finished change behind.
 
 ```ts
 // src/actors/counter.ts
@@ -43,13 +43,13 @@ actors dev      # runs locally; Actor Explorer at http://localhost:8787/__actors
 actors deploy   # wrangler deploy, without the explorer
 ```
 
-You never write a Durable Object class, a binding, a migration, or an ID. This proof of concept implements the PRD *Actors on Cloudflare* (v0.1). Results and recommendations are in [docs/findings.md](docs/findings.md).
+There is no configuration to write: the `actors` CLI generates it. Start with the [docs](docs/README.md). This proof of concept implements the PRD *Actors on Cloudflare* (v0.1); results and recommendations are in [docs/findings.md](docs/findings.md).
 
 ## What's here
 
 | Path | What |
 |---|---|
-| [packages/actors](packages/actors) | SDK (`actor()`, typed refs, `ActorError`), generic runtime (one DO class hosts all actors), dev Explorer, `actors` CLI |
+| [packages/actors](packages/actors) | SDK (`actor()`, typed refs, `ActorError`), generic runtime (one class hosts every actor type), dev Explorer, `actors` CLI |
 | [examples/counter](examples/counter) | The basic API |
 | [examples/agent](examples/agent) | Per-customer AI support agent: conversation, memory, tasks, scheduled reminders, rollback, redaction, an injected failure |
 | [examples/chat](examples/chat) | A chat room over WebSockets: typed connection data, broadcasts that go out only after the save, presence from live connections, a browser client |

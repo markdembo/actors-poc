@@ -16,14 +16,14 @@ actors generate
 Finds everything under `src/` that the framework manages:
 
 - actors, written as `export const X = actor(`
-- raw Durable Object classes, written as `export class X extends DurableObject`
+- custom classes, written as `export class X extends DurableObject`
 
 Then it writes:
 
 - `.actors/entry.ts`: the production entry point.
 - `.actors/entry.dev.ts`: the development entry point, with the Actor Explorer.
 - `.actors/manifest.json`: what was discovered.
-- `wrangler.jsonc`: creates the file, or edits it in place, keeping your settings and comments. It sets `main`, adds the `ACTORS` binding and the `actors-v1` migration, and adds one binding and migration per Durable Object class.
+- `wrangler.jsonc`: creates the file, or edits it in place, keeping your settings and comments. It sets `main`, adds the `ACTORS` binding and the `actors-v1` migration, and adds one binding and migration per custom class.
 
 Running it twice changes nothing. It fails with an explanation when:
 
@@ -84,7 +84,7 @@ A web UI served by `actors dev` at `http://localhost:8787/__actors`. It is not i
 
 - **Actor types and instances.** Every instance in local storage, read through Wrangler's Local Explorer API. Instances with recent failures are flagged.
 - **Instance view.** Saved state with the last change highlighted, an action console that takes JSON arguments, the activity timeline with stack traces and logs, storage size, runtime info, open connections, and pending schedules. You can delete an instance's storage from here.
-- **Durable Objects.** Instances of your raw Durable Object classes, with a read-only, paged view of their SQLite tables. Opening one starts it if it wasn't running.
+- **Custom classes.** Instances of your [custom classes](../api/durable.md), with a read-only, paged view of their SQLite tables. Opening one starts it if it wasn't running.
 
 The Explorer reads storage through Wrangler's Local Explorer API (`/cdn-cgi/local/explorer/api`). It requires Wrangler 4.163 or later, and it doesn't work if `X_LOCAL_EXPLORER` is set to `false`.
 

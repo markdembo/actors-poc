@@ -3,11 +3,11 @@
 > [!WARNING]
 > **Unofficial, AI-generated proof of concept.** This is not Cloudflare documentation, and the project has no support. Read the [warning in the project README](../README.md) before using any of it.
 
-These are the guarantees the PoC makes. It promises nothing that Durable Objects do not provide underneath (PRD principle 3).
+These are the guarantees actors make. They promise nothing the underlying platform doesn't provide.
 
 ## Identity
 
-- An instance is addressed by `(actor type, key)`. It maps to the Durable Object named `"<Type>:<key>"` in the `ACTORS` namespace (`idFromName`), so the mapping is deterministic.
+- An actor is addressed by `(actor type, key)`. The mapping is deterministic: the same pair always reaches the same actor.
 - Keys are scoped to **one deployment's namespace**. The same key in a different Worker, environment or account is a different instance.
 - A key is an address, not proof of authorization. Authenticate the caller first, then derive the key from their identity. Do not trust a key that came from the client.
 
@@ -23,7 +23,7 @@ For every action:
 4. **If the action throws**, the draft is discarded. Nothing is written: no state, no schedules. The failure is recorded in the invocation log.
 5. **If it returns**, the new state is checked: it must be plain JSON, `validate()` must pass, and it must be under 2 MB. The return value must be structured-cloneable. If any check fails, the action is rolled back as a `validation` error.
 6. The state, any `schedule`/`cancelSchedule` operations, and the log entry are committed in **one SQLite transaction** (`transactionSync`). If nothing changed, no state write happens.
-7. The caller gets the result. Durable Objects' output gate holds the response until the write is durable.
+7. The caller gets the result, but only once the write is durable.
 
 Things that are **not** inside the transaction:
 
@@ -53,7 +53,7 @@ Things that are **not** inside the transaction:
 
 ## Scheduling
 
-`ctx.schedule(seconds | Date, action, ...args)` stores a row and arms the Durable Object alarm. Scheduling is transactional: it is discarded if the action throws. Scheduled runs go through the same queued, transactional path, recorded with source `schedule`. Delivery is at least once: a failed run is attempted up to 3 times in total (retries after 2 s and 4 s), then dropped. The failure stays visible in the log. Scheduled actions should be idempotent.
+`ctx.schedule(seconds | Date, action, ...args)` stores a row and sets an alarm. Scheduling is transactional: it is discarded if the action throws. Scheduled runs go through the same queued, transactional path, recorded with source `schedule`. Delivery is at least once: a failed run is attempted up to 3 times in total (retries after 2 s and 4 s), then dropped. The failure stays visible in the log. Scheduled actions should be idempotent.
 
 ## WebSockets
 
@@ -77,7 +77,7 @@ The state document has no schema version. If you change the shape of state, old 
 
 ## Limits
 
-- State document: 2 MB. This is a conservative limit chosen by this proof of concept: Durable Objects SQLite allows values up to 8 MB, but every change rewrites the whole document. Put large or growing data in `ctx.sql` tables.
-- Arguments and return values: structured-cloneable (Durable Object RPC).
+- State document: 2 MB. This is a conservative limit chosen by this proof of concept: the platform allows values up to 8 MB, but every change rewrites the whole document. Put large or growing data in `ctx.sql` tables.
+- Arguments and return values: structured-cloneable.
 - Invocation log: the last 100 entries per instance. Arguments are recorded only in dev, never for actions listed in `redact.args`.
 - Instrumentation defaults to `all` in dev and `errors` in production. Override it with the `ACTORS_INSTRUMENTATION` var (`all` | `errors` | `off`).

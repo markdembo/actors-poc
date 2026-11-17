@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Semantics: persistence, concurrency, failure · Actors (unofficial PoC)</title>
-<meta name="description" content="These are the guarantees the PoC makes. It promises nothing that Durable Objects do not provide underneath (PRD principle 3).">
+<meta name="description" content="These are the guarantees actors make. They promise nothing the underlying platform doesn't provide.">
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="assets/style.css">
 <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
@@ -19,16 +19,16 @@
 </header>
 <div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
 <div class="layout">
-  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="index.html">Overview</a></li><li><a href="get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="concepts/what-are-actors.html">What are actors?</a></li><li><a href="concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="api/index.html">API reference</a></li><li><a href="api/actor.html">actor()</a></li><li><a href="api/action-context.html">Action context</a></li><li><a href="api/connections.html">Connections</a></li><li><a href="api/errors.html">Errors</a></li><li><a href="api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="reference/cli.html">CLI</a></li><li><a href="reference/configuration.html">Configuration</a></li><li><a href="reference/limits.html">Limits</a></li><li><a href="semantics.html" aria-current="page" class="active">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="findings.html">Findings</a></li></ul></div></nav>
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="index.html">Overview</a></li><li><a href="get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="concepts/what-are-actors.html">What are actors?</a></li><li><a href="concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="api/index.html">API reference</a></li><li><a href="api/actor.html">actor()</a></li><li><a href="api/action-context.html">Action context</a></li><li><a href="api/connections.html">Connections</a></li><li><a href="api/errors.html">Errors</a></li><li><a href="api/durable.html">Custom classes</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="reference/cli.html">CLI</a></li><li><a href="reference/configuration.html">Configuration</a></li><li><a href="reference/limits.html">Limits</a></li><li><a href="semantics.html" aria-current="page" class="active">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="findings.html">Findings</a></li></ul></div></nav>
   <main class="content">
     <p class="crumb">Reference</p>
     <article><h1>Semantics: persistence, concurrency, failure</h1>
 <aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
 </aside>
-<p>These are the guarantees the PoC makes. It promises nothing that Durable Objects do not provide underneath (PRD principle 3).</p>
+<p>These are the guarantees actors make. They promise nothing the underlying platform doesn&#39;t provide.</p>
 <h2 id="identity"><a class="anchor" href="#identity" aria-label="Link to this section">#</a>Identity</h2>
 <ul>
-<li>An instance is addressed by <code>(actor type, key)</code>. It maps to the Durable Object named <code>&quot;&lt;Type&gt;:&lt;key&gt;&quot;</code> in the <code>ACTORS</code> namespace (<code>idFromName</code>), so the mapping is deterministic.</li>
+<li>An actor is addressed by <code>(actor type, key)</code>. The mapping is deterministic: the same pair always reaches the same actor.</li>
 <li>Keys are scoped to <strong>one deployment&#39;s namespace</strong>. The same key in a different Worker, environment or account is a different instance.</li>
 <li>A key is an address, not proof of authorization. Authenticate the caller first, then derive the key from their identity. Do not trust a key that came from the client.</li>
 </ul>
@@ -42,7 +42,7 @@
 <li><strong>If the action throws</strong>, the draft is discarded. Nothing is written: no state, no schedules. The failure is recorded in the invocation log.</li>
 <li><strong>If it returns</strong>, the new state is checked: it must be plain JSON, <code>validate()</code> must pass, and it must be under 2 MB. The return value must be structured-cloneable. If any check fails, the action is rolled back as a <code>validation</code> error.</li>
 <li>The state, any <code>schedule</code>/<code>cancelSchedule</code> operations, and the log entry are committed in <strong>one SQLite transaction</strong> (<code>transactionSync</code>). If nothing changed, no state write happens.</li>
-<li>The caller gets the result. Durable Objects&#39; output gate holds the response until the write is durable.</li>
+<li>The caller gets the result, but only once the write is durable.</li>
 </ol>
 <p>Things that are <strong>not</strong> inside the transaction:</p>
 <ul>
@@ -68,7 +68,7 @@
 <tr><td><code>transport</code></td><td>The call failed in transit</td><td><strong>Unknown.</strong> It may have run. <code>retryable</code> reflects the platform&#39;s hint.</td></tr>
 <tr><td><code>timeout</code></td><td><code>timeoutMs</code> elapsed on the caller side</td><td><strong>Unknown.</strong> It usually still completes.</td></tr></tbody></table></div>
 <h2 id="scheduling"><a class="anchor" href="#scheduling" aria-label="Link to this section">#</a>Scheduling</h2>
-<p><code>ctx.schedule(seconds | Date, action, ...args)</code> stores a row and arms the Durable Object alarm. Scheduling is transactional: it is discarded if the action throws. Scheduled runs go through the same queued, transactional path, recorded with source <code>schedule</code>. Delivery is at least once: a failed run is attempted up to 3 times in total (retries after 2 s and 4 s), then dropped. The failure stays visible in the log. Scheduled actions should be idempotent.</p>
+<p><code>ctx.schedule(seconds | Date, action, ...args)</code> stores a row and sets an alarm. Scheduling is transactional: it is discarded if the action throws. Scheduled runs go through the same queued, transactional path, recorded with source <code>schedule</code>. Delivery is at least once: a failed run is attempted up to 3 times in total (retries after 2 s and 4 s), then dropped. The failure stays visible in the log. Scheduled actions should be idempotent.</p>
 <h2 id="websockets"><a class="anchor" href="#websockets" aria-label="Link to this section">#</a>WebSockets</h2>
 <ul>
 <li><strong>Hooks are actions.</strong> <code>onConnect</code>, <code>onMessage</code> and <code>onClose</code> are queued with the instance&#39;s other actions and follow the same transaction rules. A hook that throws changes nothing.</li>
@@ -87,8 +87,8 @@
 <p>The state document has no schema version. If you change the shape of state, old instances keep their old shape until an action rewrites it. Handle this with defaults in your actions, or a <code>validate</code> that normalizes. Versioned migrations are future work (PRD §15).</p>
 <h2 id="limits"><a class="anchor" href="#limits" aria-label="Link to this section">#</a>Limits</h2>
 <ul>
-<li>State document: 2 MB. This is a conservative limit chosen by this proof of concept: Durable Objects SQLite allows values up to 8 MB, but every change rewrites the whole document. Put large or growing data in <code>ctx.sql</code> tables.</li>
-<li>Arguments and return values: structured-cloneable (Durable Object RPC).</li>
+<li>State document: 2 MB. This is a conservative limit chosen by this proof of concept: the platform allows values up to 8 MB, but every change rewrites the whole document. Put large or growing data in <code>ctx.sql</code> tables.</li>
+<li>Arguments and return values: structured-cloneable.</li>
 <li>Invocation log: the last 100 entries per instance. Arguments are recorded only in dev, never for actions listed in <code>redact.args</code>.</li>
 <li>Instrumentation defaults to <code>all</code> in dev and <code>errors</code> in production. Override it with the <code>ACTORS_INSTRUMENTATION</code> var (<code>all</code> | <code>errors</code> | <code>off</code>).</li>
 </ul>

@@ -1,18 +1,18 @@
-# durable()
+# Custom classes
 
 > [!WARNING]
 > **Unofficial, AI-generated proof of concept.** This is not Cloudflare documentation, and the project has no support. Read the [warning in the project README](../../README.md) before using any of it.
 
-Sometimes you need a real Durable Object class:
+Most stateful code fits an actor. When it doesn't, write your own class and keep the zero-config setup and typed client. Reach for a custom class when you need:
 
 - a library that brings its own durability, such as an agent runtime
 - your own SQLite schema
 - streaming responses
 - per-class platform settings
 
-Write the class as usual. `actors generate` wires it up, and `durable()` gives you a typed stub.
+A custom class is a [Cloudflare Durable Object](https://developers.cloudflare.com/durable-objects/) ↗ class: you write it with the Durable Objects API, and it gets none of the actor features such as transactional state, the action queue or the activity log. `actors generate` wires it up, and `durable()` gives you a typed client.
 
-## Zero-config classes
+## Zero-config setup
 
 Any class declared as `export class X extends DurableObject` in a file under `src/` is discovered. For each one, `actors generate`:
 
@@ -73,9 +73,9 @@ export default {
 
 The [`examples/pi-session`](../../examples/pi-session) example hosts a [pi-durable](https://www.npmjs.com/package/@earendil-works/pi-durable) ↗ agent session this way.
 
-## Actors or raw Durable Objects?
+## Actors or custom classes?
 
-Use an actor when the state fits in one JSON document and actions are short. Use a raw class when you need:
+Use an actor when the state fits in one JSON document and actions are short. Use a custom class when you need:
 
 - full control of storage
 - long-running work
@@ -85,4 +85,4 @@ Use an actor when the state fits in one JSON document and actions are short. Use
 ## Related resources
 
 - [Configuration](../reference/configuration.md)
-- [Durable Objects: Base class](https://developers.cloudflare.com/durable-objects/api/base/) ↗
+- [Durable Objects: Base class](https://developers.cloudflare.com/durable-objects/api/base/) ↗: the API you write custom classes with

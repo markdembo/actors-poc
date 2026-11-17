@@ -10,7 +10,7 @@ my-app/
 ├── src/
 │   ├── index.ts          # your Worker: export default { fetch }
 │   ├── actors/*.ts       # actors: export const X = actor({...})   (any folder under src/ works)
-│   └── *.ts              # optional: export class X extends DurableObject
+│   └── *.ts              # optional custom classes: export class X extends DurableObject
 ├── wrangler.jsonc        # yours, with a few keys managed by `actors generate`
 └── .actors/              # generated, add to .gitignore
 ```
@@ -25,8 +25,8 @@ The Worker entry must be `src/index.ts` (or `src/index.js`, `src/worker.ts`, `sr
 |---|---|
 | `main` | `.actors/entry.ts` |
 | `compatibility_date` | Set to `2026-09-01` if missing. Must be `2024-04-03` or later. |
-| `durable_objects.bindings` | Adds `ACTORS` → `ActorHost`, and one binding per raw Durable Object class |
-| `migrations` | Adds `actors-v1` (`ActorHost`) once, and `actors-do-<Class>` per raw class |
+| `durable_objects.bindings` | Adds `ACTORS` → `ActorHost`, and one binding per custom class |
+| `migrations` | Adds `actors-v1` (`ActorHost`) once, and `actors-do-<Class>` per custom class |
 
 The binding name `ACTORS` and the class name `ActorHost` are reserved. Because `wrangler.jsonc` stays a normal Wrangler file, `wrangler secret put`, `wrangler tail` and the rest work without extra flags.
 

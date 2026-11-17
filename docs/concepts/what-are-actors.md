@@ -3,27 +3,29 @@
 > [!WARNING]
 > **Unofficial, AI-generated proof of concept.** This is not Cloudflare documentation, and the project has no support. Read the [warning in the project README](../../README.md) before using any of it.
 
-An actor is a small, stateful service with one instance per key. Each instance owns its own state, handles one action at a time, and lives until you delete its data. Under the hood, every instance is a [Durable Object](https://developers.cloudflare.com/durable-objects/) ↗.
+An actor is a small, stateful service with its own identity. You don't deploy or start actors: you address one by name, and it exists. Each actor owns private state, handles requests one at a time, and keeps its state until you delete it.
 
-## Actors, Workers and Durable Objects
+The idea comes from the actor model: a system built from many small, independent units that each own their data and talk only through messages. Here, the messages are typed method calls.
 
-| | Worker | Durable Object | Actor |
+## Actors compared with what you know
+
+| | Stateless function | Database row | Actor |
 |---|---|---|---|
-| State between requests | None | Yes, in its storage | Yes, a JSON document per instance |
-| Instances | Many, anywhere | One per ID | One per (actor type, key) |
-| Concurrency | Fully parallel | One thread; requests can interleave at `await` | One action at a time, in order |
-| What you write | A `fetch` handler | A class, binding, migration, ID and stub | `actor({ state, actions })` |
-| Failed request | Nothing to undo | Your code decides | State changes are rolled back |
+| Keeps state between requests | No | Yes | Yes |
+| Where the logic runs | In the function, after loading data | Outside, in your app | Next to the state, inside the actor |
+| Two requests at once | Each sees its own copy of the data, last write wins | Needs transactions or locks | Handled in order, never interleaved |
+| A request fails halfway | You clean up | You roll back | Changes are discarded automatically |
+| Real-time connections | No | No | Yes, clients connect to the actor |
 
-Use a Worker for stateless work. Use an actor when requests must agree on shared state. Use a raw Durable Object when you need something actors don't offer, such as a custom storage schema, streaming responses or another framework's base class. Refer to [`durable()`](../api/durable.md).
+Use a stateless function for work that doesn't depend on shared state. Use a database for data you query across many records. Use an actor when requests must agree on one piece of state, and the code that changes it should live next to it.
 
 ## The four ideas
 
 **Actor.** A type of service, such as `Cart`, `ChatRoom` or `SupportAgent`, defined once with `actor({...})` and exported from any file under `src/`.
 
-**Key.** Which instance you mean: `Cart.get("alice")`. The same key always reaches the same instance within one deployment. Different deployments or environments have separate instances.
+**Key.** Which actor you mean: `Cart.get("alice")`. The same key always reaches the same actor within one deployment. Different deployments or environments have separate actors.
 
-**State.** A JSON document per instance. Every action gets a private draft. The draft is saved when the action returns and thrown away when it throws.
+**State.** Each actor's private data, kept as a JSON document. Every action gets a private draft. The draft is saved when the action returns and thrown away when it throws.
 
 **Action.** An async function `(ctx, ...args)`. Callers see it as `(...args) => Promise<Result>` with full types.
 
@@ -38,12 +40,15 @@ Actors fit when your data has a natural owner:
 
 Actors fit less well for:
 
-- **Queries across many instances.** There is no global query over actor state. Keep an index in D1 or another store if you need one.
-- **One very hot key.** One instance handles roughly a thousand simple requests per second. Refer to [Avoid hot actors](../best-practices/rules-of-actors.md#avoid-hot-actors).
-- **Long-running work inside one call.** Actions run one at a time, so a slow action delays everything else on that instance.
+- **Queries across many actors.** There is no global query over actor state. Keep an index in a database if you need one.
+- **One very hot key.** One actor handles roughly a thousand simple requests per second. Refer to [Avoid hot actors](../best-practices/rules-of-actors.md#avoid-hot-actors).
+- **Long-running work inside one call.** Actions run one at a time, so a slow action delays everything else on that actor.
+
+> [!NOTE]
+> **Already know Cloudflare Durable Objects?** Each actor runs as one. Actors handle the class, configuration, routing, transactions and debugging tools for you. Refer to [Under the hood](how-actors-work.md#under-the-hood).
 
 ## Related resources
 
-- [How actors work](how-actors-work.md): the request path, storage layout and lifecycle.
+- [How actors work](how-actors-work.md): the request path, state, and lifecycle.
 - [Rules of actors](../best-practices/rules-of-actors.md): design guidance.
 - [Semantics](../semantics.md): the exact guarantees.
