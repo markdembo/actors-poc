@@ -1,0 +1,10 @@
+{
+  "name": "comparison-raw-do-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [{ "name": "SUPPORT_AGENT", "class_name": "SupportAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SupportAgent"] }]
+}

@@ -1,0 +1,216 @@
+# Actors on Cloudflare (PoC)
+
+Durable Objects as plain, typed, stateful TypeScript services. You write the actor; the framework handles the Durable Object class, bindings, migrations, routing, persistence, and debugging tools.
+
+```ts
+// src/actors/counter.ts
+import { actor } from "actors-poc";
+
+export const Counter = actor({
+  state: { count: 0 },
+  actions: {
+    increment: ({ state }, amount: number = 1) => (state.count += amount),
+    get: ({ state }) => state.count,
+  },
+});
+```
+
+```ts
+// src/index.ts
+import { Counter } from "./actors/counter";
+
+export default {
+  async fetch() {
+    const count = await Counter.get("customer-123").increment(5); // typed: Promise<number>
+    return Response.json({ count });
+  },
+};
+```
+
+```bash
+actors dev      # runs locally; Actor Explorer at http://localhost:8787/__actors
+```
+
+```bash
+actors deploy   # wrangler deploy, without the explorer
+```
+
+You never write a Durable Object class, a binding, a migration, or an ID. This proof of concept implements the PRD *Actors on Cloudflare* (v0.1). Results and recommendations are in [docs/findings.md](docs/findings.md).
+
+> Not an official Cloudflare product or package. This is an experimental proof of concept; APIs will change.
+
+## What's here
+
+| Path | What |
+|---|---|
+| [packages/actors](packages/actors) | SDK (`actor()`, typed refs, `ActorError`), generic runtime (one DO class hosts all actors), dev Explorer, `actors` CLI |
+| [examples/counter](examples/counter) | The basic API |
+| [examples/agent](examples/agent) | Per-customer AI support agent: conversation, memory, tasks, scheduled reminders, rollback, redaction, an injected failure |
+| [examples/chat](examples/chat) | A chat room over WebSockets: typed connection data, broadcasts that go out only after the save, presence from live connections, a browser client |
+| [examples/pi-session](examples/pi-session) | A [pi-durable](https://www.npmjs.com/package/@earendil-works/pi-durable) agent session as a plain Durable Object class, with no hand-written config (fake model, no API key) |
+| [comparison/raw-do-agent](comparison/raw-do-agent) | The same agent written directly on Durable Objects |
+| [comparison/](comparison) | Reproducible line and concept comparison ([methodology](comparison/README.md)) |
+| [docs/semantics.md](docs/semantics.md) | Exact persistence, concurrency and failure semantics |
+| [docs/findings.md](docs/findings.md) | Results against the PRD, answers to its open questions, recommendations |
+| [tests](tests) | Type tests (FR4) and an end-to-end suite against real `workerd` |
+
+## Try it
+
+```bash
+pnpm install
+```
+
+```bash
+cd examples/agent && pnpm dev
+```
+
+```bash
+curl -X POST localhost:8787/agents/acme/chat -d '{"message":"my name is Ada"}'
+```
+
+```bash
+curl -X POST localhost:8787/agents/acme/chat -d '{"message":"remind me in 5 seconds to check the invoice"}'
+```
+
+Then open http://localhost:8787/__actors, or run `pnpm exec actors inspect SupportAgent acme` from `examples/agent`.
+
+### Debugging walkthrough (the injected failure)
+
+1. Send a malformed tool call: `curl -X POST localhost:8787/agents/acme/chat -d '{"message":"tool {\"tool\": \"remember\""}'`. You get an HTTP 422.
+2. Run `actors inspect SupportAgent acme`. The failed `chat(...)` shows the exact input, a `SyntaxError`, and a stack trace through `parseToolCall` → `respond`, marked **rolled back**.
+3. The state has no half-written turn: the user message pushed before the model call was discarded with the rest of the draft.
+4. In the Explorer, invoke `chat` with `["what's my name?"]` and watch `messages` change (changed keys are highlighted).
+
+## Concepts
+
+You only need four ideas:
+
+- **Actor**: a type of stateful service (`actor({...})`).
+- **Key**: which instance you mean (`Counter.get("customer-123")`). One instance per (type, key) within a deployment. A key is an address, not an authorization.
+- **State**: a JSON document per instance. Actions get a private draft. It is committed atomically when the action returns and discarded when it throws.
+- **Action**: an async function `(ctx, ...args)`. Callers see `(...args) => Promise<Result>`.
+
+Escape hatches for when you need them: `ctx.schedule()` / `ctx.cancelSchedule()` (alarms), `ctx.sql` and `ctx.storage` (raw SQLite and storage, outside the state transaction), `ctx.env` (bindings), and Workflow or entrypoint classes exported from `src/index.ts` (re-exported automatically).
+
+### WebSockets
+
+Add `connections` to an actor, and have your Worker hand upgrade requests to it:
+
+```ts
+export const ChatRoom = actor({
+  state: { messages: [] as { user: string; text: string }[] },
+  connections: {
+    data: typed<{ user: string }>(),          // per-connection data, set by your Worker
+    onConnect(ctx, conn) { conn.send({ history: ctx.state.messages }); },
+    onMessage(ctx, conn, text) {
+      ctx.state.messages.push({ user: conn.data.user, text: String(text) });
+      ctx.broadcast({ user: conn.data.user, text });   // sent only if this commits
+    },
+    onClose(ctx, conn) { ctx.broadcast({ left: conn.data.user }); },
+  },
+  actions: { online: (ctx) => ctx.connections().map((c) => c.data.user) },
+});
+
+// in your fetch handler, after authenticating the user:
+return ChatRoom.connect(roomId, request, { data: { user } });
+```
+
+How it behaves:
+- **Hooks are actions.** They run one at a time with the instance's other actions, are saved in one transaction, and are rolled back if they throw.
+- **Sends wait for the save.** `conn.send`, `conn.close` and `ctx.broadcast` are queued and go out only after the save succeeds, so clients never see a change that was rolled back. Ordinary actions can broadcast too.
+- **Refusing a connection:** throw in `onConnect`. The client gets an HTTP 403 and no socket opens.
+- **Hibernation:** it's built on Cloudflare's WebSocket Hibernation API, so an idle room can sleep without dropping its sockets. Connection data (at most 8 KB) is stored with each socket, so it survives hibernation.
+- **Connection data comes only from your Worker.** Clients can't forge it.
+
+See [docs/semantics.md](docs/semantics.md#websockets) for delivery guarantees.
+
+### Raw Durable Objects, zero config
+
+When you need a real Durable Object class (a library such as pi-durable, WebSockets, your own alarm handling), write one and export it from any file under `src/`:
+
+```ts
+// src/session.ts
+import { DurableObject } from "cloudflare:workers";
+
+export class Session extends DurableObject {
+  async ask(text: string) { /* ... */ }
+}
+```
+
+```ts
+// src/index.ts
+import { durable } from "actors-poc";
+import { Session } from "./session";
+
+const answer = await durable(Session).get("demo").ask("hello"); // typed stub, no env or binding code
+```
+
+`actors generate` does four things for each such class:
+- **Binding:** adds one named after the class (`Session` → `SESSION`, `ChatRoom` → `CHAT_ROOM`). If you already wrote a binding for the class, it uses yours.
+- **Migration:** appends one SQLite migration (`actors-do-Session`).
+- **Export:** re-exports the class from the generated entry.
+- **Explorer:** lists its instances, where you can browse their SQLite tables read-only.
+
+It never deletes anything. If a class it bound disappears, `generate` warns and tells you how to remove its data on purpose with a `deleted_classes` migration.
+
+Only `extends DurableObject` is discovered. For classes with other base classes (Agents SDK `Agent`, PartyServer `Server`), write the binding yourself and export the class from `src/index.ts`.
+
+Read [docs/semantics.md](docs/semantics.md) before you put side effects in actions.
+
+## API
+
+```ts
+actor({
+  name?: string,                                // default: the exported const name
+  state: S | ((key: string) => S),              // JSON-serializable
+  actions: { [name]: (ctx: ActionContext<S>, ...args) => R | Promise<R> },
+  onCreate?: (ctx) => void | Promise<void>,     // first call only, same transaction
+  validate?: (state: S) => void,                // throw to reject a commit (e.g. zod .parse)
+  redact?: { state?: (keyof S)[], args?: (keyof actions)[] }, // hidden from dev tooling
+})
+
+Actor.get(key, { timeoutMs? }) → ActorRef      // typed proxy; cheap; no network until called
+
+ctx: { state, actor, key, log(...), schedule(secondsOrDate, action, ...args), cancelSchedule(id), broadcast(msg, { except?, only? }), connections(), env, storage, sql }
+
+Actor.connect(key, request, { data? }) → Promise<Response>   // WebSocket upgrade; 426 if not one, 403 if onConnect throws
+connections: { data?: typed<C>(), onConnect?(ctx, conn), onMessage?(ctx, conn, message), onClose?(ctx, conn, { code, reason, wasClean }) }
+conn: { id, data, send(msg), close(code?, reason?) }
+
+ActorError { kind: "action" | "validation" | "config" | "transport" | "timeout", code?, actor, key, method, remoteName?, remoteStack?, retryable }
+```
+
+## CLI
+
+| Command | Does |
+|---|---|
+| `actors generate` | Finds `export const X = actor(` and `export class X extends DurableObject` under `src/`, then writes `.actors/entry.ts`, `.actors/entry.dev.ts` and `manifest.json`. In `wrangler.jsonc` it adds the `ACTORS` binding, the one-time migration, and a binding and migration per Durable Object class, keeping your other keys and comments. Deterministic. |
+| `actors dev [wrangler args]` | `generate`, then `wrangler dev .actors/entry.dev.ts`. Re-runs discovery when `src/` changes. |
+| `actors deploy [wrangler args]` | `generate`, then `wrangler deploy` (e.g. `--dry-run`). The production entry has no explorer and no admin routes. |
+| `actors inspect <Type> <key>` | State, recent invocations with errors and logs, schedules, storage and runtime info. Needs `actors dev`. Persisted data is read through Wrangler's Local Explorer API. `--json` for machines. |
+| `actors list` | Actor types, their actions, and every instance in local storage. |
+
+`wrangler.jsonc` stays a normal Wrangler config, so `wrangler secret put`, `wrangler tail` and the rest work as usual. Add `.actors/` to `.gitignore`, because it is reproducible from `src/`.
+
+## Tests
+
+```bash
+pnpm test
+```
+
+This runs typecheck, the type tests and the e2e suite: 34 end-to-end checks against real `workerd`.
+- **Actors:** restart persistence, rollback, 100-way concurrency, FIFO ordering, timeouts, alarms and redaction.
+- **WebSockets:** typed hooks, sends that wait for the save, a rolled-back hook sending nothing, broadcasts from actions, `onClose`, refusing connections, and client-forged headers being ignored.
+- **Raw Durable Objects:** zero-config wiring with `durable()`, browsing their tables, and the warnings for removed classes and binding clashes.
+- **Explorer:** lists instances through Wrangler's Local Explorer, inspecting an unknown key or id creates nothing, inspect answers while an action is running, and it is localhost-only.
+- **Builds:** a production build without dev tooling, and deterministic generation.
+
+```bash
+pnpm measure
+```
+
+This runs the static comparison against raw Durable Objects.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

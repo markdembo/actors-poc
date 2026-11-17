@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "test-fixture",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true },
+
+  // ── Managed by `actors generate` ──────────────────────────────────────────
+  // One Durable Object class (ActorHost) hosts every actor type, so adding or
+  // removing actors never needs a new migration. Everything else here is yours.
+  "main": ".actors/entry.ts",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ACTORS",
+        "class_name": "ActorHost"
+      },
+      {
+        "name": "LEDGER",
+        "class_name": "Ledger"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "actors-v1",
+      "new_sqlite_classes": [
+        "ActorHost"
+      ]
+    },
+    {
+      "tag": "actors-do-Ledger",
+      "new_sqlite_classes": [
+        "Ledger"
+      ]
+    }
+  ]
+}

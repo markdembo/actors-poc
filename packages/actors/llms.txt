@@ -1,0 +1,68 @@
+# actors-poc
+
+> Stateful TypeScript services on Cloudflare Durable Objects. Define an actor, call it by key. Do not write Durable Object classes, bindings, migrations or IDs: the `actors` CLI generates them.
+
+## Project layout (required)
+- Actors: any file under `src/`, exported as `export const Name = actor({...})` (discovery depends on this exact form).
+- Worker: `src/index.ts` with `export default { fetch }`.
+- Run: `actors dev`. Deploy: `actors deploy`. Never edit `.actors/` or the `main`/`ACTORS`/`actors-v1` entries in wrangler.jsonc.
+
+## Define
+```ts
+import { actor } from "actors-poc";
+export const Cart = actor({
+  state: (key: string) => ({ owner: key, items: [] as { sku: string; qty: number }[] }), // JSON only; annotate empty arrays
+  actions: {
+    add: ({ state }, sku: string, qty: number = 1) => { state.items.push({ sku, qty }); return state.items.length; },
+    clear: (ctx) => { ctx.state = { ...ctx.state, items: [] }; },
+    list: ({ state }) => state.items,
+  },
+});
+```
+
+## Call (from the Worker or another actor)
+```ts
+import { Cart } from "./actors/cart";
+const n = await Cart.get(userId).add("sku-1", 2); // typed; returns Promise<number>
+```
+
+## Rules
+- Mutate `ctx.state` (or reassign it). Committed when the action returns, discarded when it throws.
+- State must be plain JSON: no Date, Map, Set, class instances or undefined in arrays. Store dates as ISO strings or epoch ms. Max 2 MB; put bigger data in `ctx.sql`.
+- Actions on one instance run one at a time. Never await a call to the same actor from inside its own action (deadlock).
+- External side effects (fetch, other actors, `ctx.sql` writes) are not rolled back.
+- Calls are not retried. Catch `ActorError` and branch on `err.kind`: "action" | "validation" | "config" | "transport" | "timeout". `err.code` carries a `code` you set on a thrown error.
+- Delay work: `ctx.schedule(seconds, "actionName", ...args)` (transactional, at least once).
+- Log for debugging: `ctx.log(...)`. Hide secrets from dev tools: `redact: { state: ["token"], args: ["setToken"] }`.
+- Keys are addresses, not auth. Derive them from an authenticated identity.
+
+## WebSockets
+```ts
+import { actor, typed } from "actors-poc";
+export const Room = actor({
+  state: { messages: [] as string[] },
+  connections: {
+    data: typed<{ user: string }>(),                 // set by the Worker, never by the client
+    onConnect(ctx, conn) { conn.send({ history: ctx.state.messages }); },  // throw → client gets 403
+    onMessage(ctx, conn, msg) { ctx.state.messages.push(String(msg)); ctx.broadcast({ from: conn.data.user, msg }); },
+    onClose(ctx, conn) { ctx.broadcast({ left: conn.data.user }); },
+  },
+  actions: { online: (ctx) => ctx.connections().map((c) => c.data.user) },
+});
+// Worker fetch handler (after auth): return Room.connect(roomId, request, { data: { user } });
+```
+- Hooks are actions (queued, transactional). Sends and broadcasts go out only if the hook/action commits; delivery is at-most-once.
+
+## Raw Durable Objects (when an actor isn't enough)
+```ts
+// src/session.ts: any file under src/. No wrangler.jsonc edits: `actors generate` adds binding SESSION + migration.
+import { DurableObject } from "cloudflare:workers";
+export class Session extends DurableObject { async ask(q: string) { return q; } }
+// caller
+import { durable } from "actors-poc";
+await durable(Session).get("demo").ask("hi"); // typed stub
+```
+
+## Debug
+- `actors inspect <Type> <key>`: state, recent calls, errors with stacks, logs, schedules.
+- http://localhost:8787/__actors: Actor Explorer (dev only).

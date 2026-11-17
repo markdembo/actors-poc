@@ -1,0 +1,26 @@
+{
+  "name": "actors-on-cloudflare",
+  "private": true,
+  "type": "module",
+  "description": "Proof of concept: Durable Objects as ordinary, typed, stateful TypeScript services.",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "pnpm -r run typecheck && tsc -p tests/types",
+    "test": "pnpm typecheck && pnpm test:e2e",
+    "measure": "node comparison/measure.mjs",
+    "test:e2e": "node tests/e2e.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261116.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.163.0"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd",
+      "sharp"
+    ]
+  }
+}

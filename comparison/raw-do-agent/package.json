@@ -1,0 +1,9 @@
+{
+  "name": "comparison-raw-do-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit -p ."
+  }
+}

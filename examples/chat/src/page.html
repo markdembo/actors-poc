@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat Room</title>
+<style>
+:root { --bg: #f7f7f5; --panel: #fff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e4e3df; --accent: #f38020; --accent-ink: #fff; --err: #b42318; }
+@media (prefers-color-scheme: dark) { :root { --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #9b9a94; --line: #2f2f2c; --accent: #f69a4b; --accent-ink: #1d1d1b; --err: #ff8a80; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+form { display: flex; gap: 8px; flex-wrap: wrap; }
+input { flex: 1; min-width: 0; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: inherit; }
+button { font: 600 14px system-ui, sans-serif; padding: 8px 14px; border-radius: 8px; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+#log { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; height: 55vh; overflow-y: auto; }
+.msg { margin: 4px 0; } .msg b { margin-right: 6px; } .sys { color: var(--muted); font-style: italic; } .err { color: var(--err); }
+.meta { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <form id="join"><input id="room" value="lobby" aria-label="Room"><input id="user" placeholder="your name" aria-label="Name" required><button>Join</button></form>
+  <div class="meta" id="status">Not connected. Open this page in two tabs to chat. Send /fail to see a rolled-back message.</div>
+  <div id="log"></div>
+  <form id="send"><input id="text" placeholder="Message" autocomplete="off" aria-label="Message"><button>Send</button></form>
+</main>
+<script>
+let ws;
+const log = document.getElementById("log");
+const line = (html, cls = "msg") => { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; log.append(d); log.scrollTop = log.scrollHeight; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const show = (m) => line("<b>" + esc(m.user) + "</b>" + esc(m.text));
+document.getElementById("join").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (ws) ws.close();
+  log.innerHTML = "";
+  const room = document.getElementById("room").value, user = document.getElementById("user").value;
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/rooms/" + encodeURIComponent(room) + "/ws?user=" + encodeURIComponent(user));
+  ws.onopen = () => (document.getElementById("status").textContent = "Connected to " + room + " as " + user);
+  ws.onclose = (ev) => (document.getElementById("status").textContent = "Disconnected" + (ev.code === 1006 ? " (refused or lost)" : ""));
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "welcome") { m.messages.forEach(show); line("Online: " + esc(m.online.join(", ")), "sys"); }
+    if (m.type === "message") show(m.message);
+    if (m.type === "joined") line(esc(m.user) + " joined", "sys");
+    if (m.type === "left") line(esc(m.user) + " left", "sys");
+  };
+});
+document.getElementById("send").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const t = document.getElementById("text");
+  if (ws && ws.readyState === 1 && t.value.trim()) { ws.send(t.value); t.value = ""; }
+});
+</script>
+</body>
+</html>

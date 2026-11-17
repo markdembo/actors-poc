@@ -1,0 +1,17 @@
+{
+  "name": "example-pi-session",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "actors dev",
+    "deploy": "actors deploy",
+    "generate": "actors generate",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2",
+    "actors-poc": "workspace:*"
+  }
+}

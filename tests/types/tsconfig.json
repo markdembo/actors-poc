@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "paths": { "actors-poc": ["../../packages/actors/src/index.ts"] } },
+  "include": ["*.ts"]
+}

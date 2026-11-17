@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Actor Explorer</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e4e3df;
+  --accent: #f38020; --accent-ink: #ffffff; --ok: #1f7a3d; --err: #b42318; --err-bg: #fdecea;
+  --code-bg: #f1f0ec; --hl: #fff3d6;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #9b9a94; --line: #2f2f2c;
+    --accent: #f69a4b; --accent-ink: #1d1d1b; --ok: #5cc185; --err: #ff8a80; --err-bg: #3a1f1d;
+    --code-bg: #262624; --hl: #3b3220;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); }
+header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+header .spacer { flex: 1; }
+header label { color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.layout { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 45px); }
+aside { border-right: 1px solid var(--line); padding: 12px; background: var(--panel); overflow: auto; }
+main { padding: 16px; overflow: auto; min-width: 0; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 6px; font-weight: 600; }
+h2:first-child { margin-top: 0; }
+.type { margin-bottom: 10px; }
+.type-name { font-weight: 600; display: flex; justify-content: space-between; }
+.type-name small { color: var(--muted); font-weight: 400; }
+.inst { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; padding: 5px 8px; margin: 2px 0; border: 0; border-radius: 6px; background: transparent; color: inherit; font: 13px var(--mono); cursor: pointer; }
+.inst:hover { background: var(--code-bg); }
+.inst.active { background: var(--accent); color: var(--accent-ink); }
+.inst .err { color: var(--err); }
+.inst.active .err { color: inherit; }
+.empty { color: var(--muted); font-size: 13px; padding: 4px 8px; }
+form.open { display: flex; gap: 6px; margin-top: 6px; }
+input, select, textarea { font: 13px var(--mono); background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+textarea { width: 100%; min-height: 64px; resize: vertical; }
+button.btn { font: 600 13px var(--sans); border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.danger { color: var(--err); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+.card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 650; display: flex; align-items: center; gap: 8px; }
+.ident { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.ident .t { font-size: 20px; font-weight: 700; }
+.ident .k { font: 18px var(--mono); color: var(--muted); }
+.ident .actions { margin-left: auto; display: flex; gap: 8px; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; }
+pre { margin: 0; background: var(--code-bg); border-radius: 8px; padding: 10px; font: 12.5px/1.5 var(--mono); overflow: auto; white-space: pre-wrap; word-break: break-word; }
+pre .hl { background: var(--hl); border-radius: 3px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+.pill { font: 600 11px var(--sans); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.ok { color: var(--ok); border-color: currentColor; }
+.pill.err { color: var(--err); border-color: currentColor; }
+.console-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.hint { color: var(--muted); font: 12px var(--mono); margin: 4px 0 8px; }
+.result { margin-top: 10px; }
+.result.err pre { background: var(--err-bg); color: var(--err); }
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline li { border-top: 1px solid var(--line); padding: 8px 0; }
+.timeline li:first-child { border-top: 0; }
+.tl-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.tl-head .m { font: 600 13px var(--mono); }
+.tl-head .meta { color: var(--muted); font-size: 12px; }
+.tl-body { margin-top: 6px; display: grid; gap: 6px; }
+.tl-body .err { color: var(--err); font-weight: 600; font-size: 13px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.welcome { max-width: 640px; color: var(--muted); }
+.welcome code { font-family: var(--mono); background: var(--code-bg); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+.tables { display: flex; flex-wrap: wrap; gap: 6px; }
+.tables button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.scroll { overflow-x: auto; }
+table.rows { border-collapse: collapse; font: 12px var(--mono); width: 100%; }
+table.rows th, table.rows td { text-align: left; vertical-align: top; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.rows td.long { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 280px; max-width: 520px; }
+table.rows th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+.pager { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.kind { font: 600 10px var(--sans); color: var(--muted); letter-spacing: .04em; }
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  aside { border-right: 0; border-bottom: 1px solid var(--line); }
+  .grid2 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot"></span><h1>Actor Explorer</h1><span class="pill">local dev</span>
+  <span class="spacer"></span>
+  <label><input type="checkbox" id="auto" checked> auto-refresh</label>
+</header>
+<div class="layout">
+  <aside id="side"></aside>
+  <main id="main"></main>
+</div>
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const api = async (path, init) => {
+  const r = await fetch("/__actors/api" + path, init);
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+};
+const ago = (ts) => {
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  return new Date(ts).toLocaleString();
+};
+
+let types = [], instances = [], objects = [], current = null, lastResult = null, highlight = [];
+let doTable = null, doOffset = 0;
+const PAGE = 50;
+
+function readHash() {
+  const d = location.hash.match(/^#\/do\/([^/]+)\/(.+)$/);
+  if (d) return { do: true, cls: decodeURIComponent(d[1]), id: decodeURIComponent(d[2]) };
+  const m = location.hash.match(/^#\/([^/]+)\/(.+)$/);
+  return m ? { type: decodeURIComponent(m[1]), key: decodeURIComponent(m[2]) } : null;
+}
+
+async function loadSide() {
+  [types, instances, objects] = await Promise.all([api("/types"), api("/instances"), api("/objects")]);
+  renderSide();
+}
+
+function renderSide() {
+  const side = $("#side");
+  let html = "<h2>Actor types</h2>";
+  if (!types.length) html += '<div class="empty">No actors registered.</div>';
+  for (const t of types) {
+    const inst = instances.filter((i) => i.actor === t.name);
+    html += '<div class="type"><div class="type-name">' + esc(t.name) + "<small>" + t.actions.length + " actions</small></div>";
+    if (!inst.length) html += '<div class="empty">No instances observed yet</div>';
+    for (const i of inst) {
+      const active = current && current.type === i.actor && current.key === i.key ? " active" : "";
+      html += '<button class="inst' + active + '" data-type="' + esc(i.actor) + '" data-key="' + esc(i.key) + '"><span>' + esc(i.key) + "</span>" +
+        (i.errors ? '<span class="err" title="failed invocations among the last 100">' + i.errors + " err</span>" : '<span title="recent invocations (last 100)">' + (i.invocations ?? "") + "</span>") + "</button>";
+    }
+    html += "</div>";
+  }
+  if (objects.length) {
+    html += "<h2>Durable Objects</h2>";
+    for (const o of objects) {
+      html += '<div class="type"><div class="type-name">' + esc(o.class) + "<small>" + esc(o.binding) + "</small></div>";
+      if (!o.instances.length) html += '<div class="empty">No instances yet</div>';
+      for (const i of o.instances) {
+        const active = current && current.do && current.cls === o.class && current.id === i.id ? " active" : "";
+        html += '<button class="inst' + active + '" data-do-class="' + esc(o.class) + '" data-do-id="' + esc(i.id) + '" title="' + esc(i.id) + '"><span>' +
+          esc(i.name ?? i.id.slice(0, 12) + "…") + "</span></button>";
+      }
+      html += "</div>";
+    }
+  }
+  if (types.length) html += '<h2>Open by key</h2><form class="open" id="open"><select name="type">' +
+    types.map((t) => "<option>" + esc(t.name) + "</option>").join("") +
+    '</select><input name="key" placeholder="key" style="flex:1"><button class="btn">Go</button></form>';
+  html += '<p class="hint">Every instance in local storage, listed through Wrangler\'s Local Explorer. Opening an actor key that doesn\'t exist does not create it.</p>';
+  side.innerHTML = html;
+  side.querySelectorAll(".inst").forEach((b) => b.addEventListener("click", () => {
+    location.hash = b.dataset.doClass
+      ? "#/do/" + encodeURIComponent(b.dataset.doClass) + "/" + encodeURIComponent(b.dataset.doId)
+      : "#/" + encodeURIComponent(b.dataset.type) + "/" + encodeURIComponent(b.dataset.key);
+  }));
+  if ($("#open")) $("#open").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    if (f.get("key")) location.hash = "#/" + encodeURIComponent(f.get("type")) + "/" + encodeURIComponent(f.get("key"));
+  });
+}
+
+function renderWelcome() {
+  $("#main").innerHTML = '<div class="welcome"><h2>Getting started</h2><p>Pick an actor or Durable Object instance on the left, or open an actor by key. ' +
+    'Instances appear here after their first invocation from your app, e.g. <code>await Counter.get("customer-123").increment()</code>.</p>' +
+    "<p>From a terminal: <code>actors inspect &lt;Type&gt; &lt;key&gt;</code></p></div>";
+}
+
+function stateHtml(state, keys) {
+  if (state === undefined) return '<pre class="empty">No state yet: this instance has not committed an action.</pre>';
+  const text = JSON.stringify(state, null, 2);
+  if (!keys || !keys.length || !state || typeof state !== "object") return "<pre>" + esc(text) + "</pre>";
+  // highlight top-level keys that changed in the last invocation
+  const lines = text.split("\n");
+  let out = "", hl = false, depth = 0;
+  for (const line of lines) {
+    if (depth === 1) {
+      const m = line.match(/^  "((?:[^"\\]|\\.)*)":/);
+      if (m) hl = keys.includes(JSON.parse('"' + m[1] + '"'));
+    }
+    const piece = esc(line);
+    out += (depth >= 1 && hl ? '<span class="hl">' + piece + "</span>" : piece) + "\n";
+    for (const ch of line.replace(/"(?:[^"\\]|\\.)*"/g, "")) { if (ch === "{" || ch === "[") depth++; if (ch === "}" || ch === "]") depth--; }
+    if (depth === 1 && /^\s*[}\]],?$/.test(line)) hl = false;
+  }
+  return "<pre>" + out + "</pre>";
+}
+
+async function loadDetail() {
+  current = readHash();
+  renderSide();
+  if (!current) return renderWelcome();
+  if (current.do) return loadObject();
+  let d;
+  try { d = await api("/actors/" + encodeURIComponent(current.type) + "/" + encodeURIComponent(current.key)); }
+  catch (e) { $("#main").innerHTML = '<div class="card result err"><pre>' + esc(e.message) + "</pre></div>"; return; }
+  const t = types.find((x) => x.name === current.type) || { actions: [] };
+  const latest = d.invocations[0];
+  const keys = highlight.length ? highlight : (latest && latest.changed ? latest.changedKeys : []);
+  const prevMethod = $("#method") ? $("#method").value : null;
+  const prevArgs = $("#args") ? $("#args").value : null;
+  const L = d.lifecycle || { durableObjectId: "—", instanceStartedAt: null, activeAction: null, queuedActions: 0, nextAlarm: null, note: "This key has no instance in local storage. Invoke an action to create it." };
+
+  let html = '<div class="ident"><span class="t">' + esc(d.actor) + '</span><span class="k">"' + esc(d.key) + '"</span>' +
+    (d.exists ? '<span class="pill">v' + d.version + "</span>" : '<span class="pill">not created</span>') +
+    '<span class="actions"><button class="btn" id="refresh">Refresh</button>' + (d.lifecycle ? '<button class="btn danger" id="wipe">Delete instance…</button>' : "") + '</span></div>';
+
+  html += '<div class="grid2"><div>';
+  html += '<div class="card"><h3>Persisted state' + (keys.length ? ' <span class="pill">changed: ' + esc(keys.join(", ")) + "</span>" : "") + "</h3>" +
+    stateHtml(d.state, keys) + (d.redacted && d.redacted.length ? '<p class="hint">Redacted keys: ' + esc(d.redacted.join(", ")) + "</p>" : "") + "</div>";
+
+  html += '<div class="card"><h3>Invoke an action</h3><div class="console-row"><select id="method">' +
+    t.actions.map((a) => "<option" + (a.name === prevMethod ? " selected" : "") + ">" + esc(a.name) + "</option>").join("") +
+    '</select><button class="btn primary" id="invoke">Invoke</button></div><div class="hint" id="params"></div>' +
+    '<textarea id="args" spellcheck="false" placeholder="Arguments as a JSON array, e.g. [1]">' + esc(prevArgs ?? "[]") + "</textarea>" +
+    '<div id="result"></div></div>';
+
+  html += '<div class="card"><h3>Activity <span class="pill">' + d.invocations.length + " recent</span></h3>";
+  if (!d.invocations.length) html += '<div class="empty">No recorded invocations.</div>';
+  html += '<ul class="timeline">';
+  for (const inv of d.invocations) {
+    html += '<li><div class="tl-head"><span class="pill ' + (inv.ok ? "ok" : "err") + '">' + (inv.ok ? "ok" : "error") + '</span><span class="m">' + esc(inv.method) + "(" + esc(inv.args ? inv.args.slice(1, -1) : "…") + ")</span>" +
+      '<span class="meta">' + esc(inv.source) + " · " + inv.durationMs + "ms · " + ago(inv.ts) + " · #" + esc(inv.invocation) +
+      (inv.ok ? (inv.changed ? " · v" + inv.version + " · changed " + esc(inv.changedKeys.join(", ")) : " · no state change") : " · rolled back") + "</span></div>";
+    const body = [];
+    if (inv.error) body.push('<div class="err">' + esc(inv.error.name) + ": " + esc(inv.error.message) + (inv.error.code ? " [" + esc(inv.error.code) + "]" : "") + "</div>" +
+      (inv.error.stack ? "<details><summary>stack trace</summary><pre>" + esc(inv.error.stack) + "</pre></details>" : ""));
+    if (inv.logs.length) body.push("<details" + (inv.error ? " open" : "") + "><summary>" + inv.logs.length + " log line(s)</summary><pre>" + esc(inv.logs.join("\n")) + "</pre></details>");
+    if (body.length) html += '<div class="tl-body">' + body.join("") + "</div>";
+    html += "</li>";
+  }
+  html += "</ul></div></div><div>";
+
+  html += '<div class="card"><h3>Storage</h3><dl class="kv"><dt>created</dt><dd>' + (d.createdAt ? new Date(d.createdAt).toLocaleString() : "—") +
+    "</dd><dt>updated</dt><dd>" + (d.updatedAt ? ago(d.updatedAt) : "—") + "</dd><dt>state size</dt><dd>" + d.storage.stateBytes.toLocaleString() + " bytes</dd>" +
+    "<dt>SQLite size</dt><dd>" + d.storage.databaseSizeBytes.toLocaleString() + " bytes</dd><dt>version</dt><dd>" + (d.version ?? "—") + "</dd></dl></div>";
+
+  html += '<div class="card"><h3>Runtime</h3><dl class="kv"><dt>DO id</dt><dd>' + esc(L.durableObjectId) + "</dd><dt>instance started</dt><dd>" + (L.instanceStartedAt ? ago(L.instanceStartedAt) : "—") +
+    "</dd><dt>running now</dt><dd>" + (L.activeAction ? esc(L.activeAction.method) + " for " + Math.round((Date.now() - L.activeAction.since) / 1000) + "s" : "idle") +
+    "</dd><dt>queued</dt><dd>" + L.queuedActions + "</dd><dt>next alarm</dt><dd>" + (L.nextAlarm ? new Date(L.nextAlarm).toLocaleTimeString() : "none") +
+    '</dd></dl><p class="hint">' + esc(L.note) + "</p></div>";
+
+  const conns = (d.lifecycle && d.lifecycle.connections) || [];
+  html += '<div class="card"><h3>Connections <span class="pill">' + conns.length + " open</span></h3>" +
+    (conns.length ? '<ul class="timeline">' + conns.map((c) => '<li><div class="tl-head"><span class="m">' + esc(c.id.slice(0, 8)) +
+      '</span><span class="meta">' + ago(c.connectedAt) + "</span></div>" + (c.data !== null && c.data !== undefined ? "<pre>" + esc(JSON.stringify(c.data)) + "</pre>" : "") + "</li>").join("") + "</ul>"
+      : '<div class="empty">No WebSocket connections.</div>') + "</div>";
+  html += '<div class="card"><h3>Scheduled <span class="pill">' + d.schedules.length + "</span></h3>" +
+    (d.schedules.length ? '<ul class="timeline">' + d.schedules.map((s) => '<li><div class="tl-head"><span class="m">' + esc(s.action) + "(" + esc(JSON.stringify(s.args).slice(1, -1)) + ')</span><span class="meta">at ' +
+      new Date(s.at).toLocaleTimeString() + (s.attempts ? " · " + s.attempts + " failed attempt(s)" : "") + "</span></div></li>").join("") + "</ul>" : '<div class="empty">Nothing scheduled.</div>') + "</div>";
+
+  html += "</div></div>";
+  $("#main").innerHTML = html;
+  if (lastResult) $("#result").innerHTML = lastResult;
+
+  const showParams = () => {
+    const a = t.actions.find((x) => x.name === $("#method").value);
+    $("#params").textContent = a ? "params: (" + (a.params.join(", ") || "none") + ")" : "";
+  };
+  $("#method").addEventListener("change", showParams);
+  showParams();
+  $("#refresh").addEventListener("click", () => { highlight = []; loadAll(); });
+  if ($("#wipe")) $("#wipe").addEventListener("click", async () => {
+    if (!confirm("Delete all storage for " + d.actor + '("' + d.key + '")? This cannot be undone.')) return;
+    await api("/actors/" + encodeURIComponent(d.actor) + "/" + encodeURIComponent(d.key), { method: "DELETE" });
+    lastResult = null; location.hash = ""; loadAll();
+  });
+  $("#invoke").addEventListener("click", invoke);
+}
+
+async function loadObject() {
+  const base = "/objects/" + encodeURIComponent(current.cls) + "/" + encodeURIComponent(current.id);
+  let d, rows = null;
+  try {
+    d = await api(base);
+    if (doTable && !d.tables.some((t) => t.name === doTable)) { doTable = null; doOffset = 0; }
+    if (!doTable && d.tables.length) doTable = d.tables[0].name;
+    if (doTable) rows = await api(base + "/tables/" + encodeURIComponent(doTable) + "?limit=" + PAGE + "&offset=" + doOffset);
+  } catch (e) { $("#main").innerHTML = '<div class="card result err"><pre>' + esc(e.message) + "</pre></div>"; return; }
+
+  let html = '<div class="ident"><span class="kind">DURABLE OBJECT</span><span class="t">' + esc(d.class) + "</span>" +
+    '<span class="k">' + esc(d.name !== null ? '"' + d.name + '"' : d.id.slice(0, 16) + "…") + '</span><span class="pill">read-only</span>' +
+    '<span class="actions"><button class="btn" id="refresh">Refresh</button></span></div>';
+  html += '<div class="card"><h3>Tables <span class="pill">' + d.tables.length + "</span></h3>";
+  html += d.tables.length
+    ? '<div class="tables">' + d.tables.map((t) => '<button class="btn' + (t.name === doTable ? " active" : "") + '" data-table="' + esc(t.name) + '">' +
+        esc(t.name) + ' <span class="hint">' + t.rows.toLocaleString() + "</span></button>").join("") + "</div>"
+    : '<div class="empty">No tables.</div>';
+  html += '<p class="hint">binding ' + esc(d.binding) + " · id " + esc(d.id) + "<br>" + esc(d.note) + "</p></div>";
+
+  if (rows) {
+    html += '<div class="card"><h3>' + esc(rows.table) + ' <span class="pill">' + rows.total.toLocaleString() + " rows</span>" +
+      '<span class="hint">newest first</span></h3>';
+    if (!rows.rows.length) html += '<div class="empty">Empty table.</div>';
+    else {
+      html += '<div class="scroll"><table class="rows"><thead><tr>' + rows.columns.map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>" +
+        rows.rows.map((r) => "<tr>" + r.map((v) => { const t = v === null ? "null" : typeof v === "object" ? JSON.stringify(v) : String(v);
+          return "<td" + (t.length > 40 ? ' class="long"' : "") + ">" + esc(t) + "</td>"; }).join("") + "</tr>").join("") +
+        "</tbody></table></div>";
+    }
+    const from = rows.total ? rows.offset + 1 : 0, to = rows.offset + rows.rows.length;
+    html += '<div class="pager"><button class="btn" id="newer"' + (rows.offset === 0 ? " disabled" : "") + '>← Newer</button>' +
+      '<span class="hint">' + from + "–" + to + " of " + rows.total + '</span><button class="btn" id="older"' + (to >= rows.total ? " disabled" : "") + ">Older →</button></div></div>";
+  }
+  $("#main").innerHTML = html;
+  $("#refresh").addEventListener("click", () => loadAll());
+  $("#main").querySelectorAll("[data-table]").forEach((b) => b.addEventListener("click", () => { doTable = b.dataset.table; doOffset = 0; loadAll(); }));
+  if ($("#newer")) $("#newer").addEventListener("click", () => { doOffset = Math.max(0, doOffset - PAGE); loadAll(); });
+  if ($("#older")) $("#older").addEventListener("click", () => { doOffset += PAGE; loadAll(); });
+}
+
+async function invoke() {
+  let args;
+  try { args = JSON.parse($("#args").value || "[]"); if (!Array.isArray(args)) throw new Error("Arguments must be a JSON array"); }
+  catch (e) { $("#result").innerHTML = '<div class="result err"><pre>' + esc(e.message) + "</pre></div>"; return; }
+  const btn = $("#invoke"); btn.disabled = true;
+  try {
+    const r = await api("/actors/" + encodeURIComponent(current.type) + "/" + encodeURIComponent(current.key) + "/invoke",
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ method: $("#method").value, args }) });
+    lastResult = r.ok
+      ? '<div class="result"><p class="hint">returned in ' + r.durationMs + "ms</p><pre>" + esc(JSON.stringify(r.value, null, 2) ?? "undefined") + "</pre></div>"
+      : '<div class="result err"><p class="hint">' + esc(r.error.kind) + " error · state rolled back</p><pre>" + esc(r.error.name + ": " + r.error.message) + "</pre></div>";
+  } catch (e) {
+    lastResult = '<div class="result err"><pre>' + esc(e.message) + "</pre></div>";
+  } finally { btn.disabled = false; }
+  highlight = [];
+  await loadAll();
+}
+
+async function loadAll() {
+  try { await loadSide(); await loadDetail(); }
+  catch (e) { $("#main").innerHTML = '<div class="card result err"><pre>' + esc(e.message) + "</pre></div>"; }
+}
+
+window.addEventListener("hashchange", () => { lastResult = null; highlight = []; doTable = null; doOffset = 0; loadAll(); });
+setInterval(() => {
+  const busy = document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName);
+  if ($("#auto").checked && !busy && !document.hidden) loadAll();
+}, 2000);
+loadAll();
+</script>
+</body>
+</html>

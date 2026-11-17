@@ -1,0 +1,26 @@
+{
+  "name": "actors-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Actors on Cloudflare (PoC): define stateful TypeScript services; the framework handles Durable Objects.",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime": "./src/runtime.ts",
+    "./dev": "./src/dev.ts"
+  },
+  "bin": {
+    "actors": "./bin/actors.mjs"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
+  },
+  "peerDependencies": {
+    "wrangler": ">=4.163.0"
+  }
+}

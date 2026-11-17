@@ -1,0 +1,14 @@
+{
+  "name": "example-counter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "actors dev",
+    "deploy": "actors deploy",
+    "generate": "actors generate",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "actors-poc": "workspace:*"
+  }
+}
