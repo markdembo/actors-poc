@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get started · Actors (unofficial PoC)</title>
+<meta name="description" content="This guide walks you through:">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="index.html">Overview</a></li><li><a href="get-started.html" aria-current="page" class="active">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="concepts/what-are-actors.html">What are actors?</a></li><li><a href="concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="api/index.html">API reference</a></li><li><a href="api/actor.html">actor()</a></li><li><a href="api/action-context.html">Action context</a></li><li><a href="api/connections.html">Connections</a></li><li><a href="api/errors.html">Errors</a></li><li><a href="api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="reference/cli.html">CLI</a></li><li><a href="reference/configuration.html">Configuration</a></li><li><a href="reference/limits.html">Limits</a></li><li><a href="semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    
+    <article><h1>Get started</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>This guide walks you through:</p>
+<ul>
+<li>Creating a project that uses actors.</li>
+<li>Writing a shopping cart actor with typed actions.</li>
+<li>Calling it from a Worker.</li>
+<li>Running it locally and inspecting its state.</li>
+<li>Deploying it.</li>
+</ul>
+<p>Refer to <a href="concepts/what-are-actors.html">What are actors?</a> for the ideas behind each step.</p>
+<h2 id="prerequisites"><a class="anchor" href="#prerequisites" aria-label="Link to this section">#</a>Prerequisites</h2>
+<ol>
+<li><a href="https://nodejs.org/" target="_blank" rel="noopener">Node.js</a> ↗ 22 or later. This guide was tested with Node.js 24.</li>
+<li><a href="https://pnpm.io/" target="_blank" rel="noopener">pnpm</a> ↗ 10 or later. The package is installed from a subdirectory of a Git repository, which npm does not support.</li>
+<li>A <a href="https://dash.cloudflare.com/sign-up/workers-and-pages" target="_blank" rel="noopener">Cloudflare account</a> ↗, only for the deploy step.</li>
+</ol>
+<h2 id="1-create-a-project"><a class="anchor" href="#1-create-a-project" aria-label="Link to this section">#</a>1. Create a project</h2>
+<p>Create a folder and a <code>package.json</code>:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash"><span class="hljs-built_in">mkdir</span> my-actors &amp;&amp; <span class="hljs-built_in">cd</span> my-actors
+pnpm init</code></pre></figure>
+<p>Allow the native builds Wrangler needs. Add this to <code>package.json</code>, and set the module type and scripts at the same time:</p>
+<figure class="code has-title"><figcaption><span>package.json</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;type&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;module&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;scripts&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;dev&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;actors dev&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;deploy&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;actors deploy&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;typecheck&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;tsc --noEmit&quot;</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;pnpm&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;onlyBuiltDependencies&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;esbuild&quot;</span><span class="hljs-punctuation">,</span> <span class="hljs-string">&quot;workerd&quot;</span><span class="hljs-punctuation">]</span>
+  <span class="hljs-punctuation">}</span>
+<span class="hljs-punctuation">}</span></code></pre></figure>
+<p>Install the package from GitHub, plus Wrangler, the Workers types and TypeScript:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">pnpm add <span class="hljs-string">&quot;github:markdembo/actors-poc#path:packages/actors&quot;</span>
+pnpm add -D wrangler@^4.163.0 @cloudflare/workers-types typescript</code></pre></figure>
+<p>Add a <code>tsconfig.json</code>:</p>
+<figure class="code has-title"><figcaption><span>tsconfig.json</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-json"><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;compilerOptions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">&quot;target&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;ES2022&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;module&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;ES2022&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;moduleResolution&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;Bundler&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;lib&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;ES2022&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;types&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;@cloudflare/workers-types&quot;</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;strict&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;noEmit&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;skipLibCheck&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;allowImportingTsExtensions&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;include&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-string">&quot;src&quot;</span><span class="hljs-punctuation">]</span>
+<span class="hljs-punctuation">}</span></code></pre></figure>
+<aside class="callout callout-note" role="note"><p class="callout-title">Note</p><p><code>allowImportingTsExtensions</code> is needed because the package ships TypeScript sources rather than compiled JavaScript.</p>
+</aside>
+<h2 id="2-write-an-actor"><a class="anchor" href="#2-write-an-actor" aria-label="Link to this section">#</a>2. Write an actor</h2>
+<p>Create <code>src/actors/cart.ts</code>:</p>
+<figure class="code has-title"><figcaption><span>src/actors/cart.ts</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">import</span> { actor } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;actors-poc&quot;</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">interface</span> <span class="hljs-title class_">CartItem</span> {
+  <span class="hljs-attr">sku</span>: <span class="hljs-built_in">string</span>;
+  <span class="hljs-attr">quantity</span>: <span class="hljs-built_in">number</span>;
+}
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> <span class="hljs-title class_">Cart</span> = <span class="hljs-title function_">actor</span>({
+  <span class="hljs-attr">state</span>: { <span class="hljs-attr">items</span>: [] <span class="hljs-keyword">as</span> <span class="hljs-title class_">CartItem</span>[] },
+  <span class="hljs-attr">actions</span>: {
+    <span class="hljs-attr">add</span>: <span class="hljs-function">(<span class="hljs-params">{ state }, <span class="hljs-attr">sku</span>: <span class="hljs-built_in">string</span>, <span class="hljs-attr">quantity</span>: <span class="hljs-built_in">number</span> = <span class="hljs-number">1</span></span>) =&gt;</span> {
+      <span class="hljs-keyword">if</span> (!<span class="hljs-title class_">Number</span>.<span class="hljs-title function_">isInteger</span>(quantity) || quantity &lt; <span class="hljs-number">1</span>) <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Error</span>(<span class="hljs-string">&quot;quantity must be a positive integer&quot;</span>);
+      <span class="hljs-keyword">const</span> existing = state.<span class="hljs-property">items</span>.<span class="hljs-title function_">find</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> item.<span class="hljs-property">sku</span> === sku);
+      <span class="hljs-keyword">if</span> (existing) existing.<span class="hljs-property">quantity</span> += quantity;
+      <span class="hljs-keyword">else</span> state.<span class="hljs-property">items</span>.<span class="hljs-title function_">push</span>({ sku, quantity });
+      <span class="hljs-keyword">return</span> state.<span class="hljs-property">items</span>;
+    },
+    <span class="hljs-attr">remove</span>: <span class="hljs-function">(<span class="hljs-params">{ state }, <span class="hljs-attr">sku</span>: <span class="hljs-built_in">string</span></span>) =&gt;</span> {
+      state.<span class="hljs-property">items</span> = state.<span class="hljs-property">items</span>.<span class="hljs-title function_">filter</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> item.<span class="hljs-property">sku</span> !== sku);
+      <span class="hljs-keyword">return</span> state.<span class="hljs-property">items</span>;
+    },
+    <span class="hljs-attr">list</span>: <span class="hljs-function">(<span class="hljs-params">{ state }</span>) =&gt;</span> state.<span class="hljs-property">items</span>,
+  },
+});</code></pre></figure>
+<p>In the code above, you have:</p>
+<ol>
+<li>Exported the actor as <code>export const Cart = actor(...)</code>. The CLI finds actors by this exact form, and the export name becomes the actor&#39;s name.</li>
+<li>Declared the initial state of every new cart. <code>[] as CartItem[]</code> tells TypeScript what the empty array will hold.</li>
+<li>Defined three actions. Each receives a context (<code>{ state }</code>) first, then the caller&#39;s arguments.</li>
+<li>Thrown an error for bad input. When an action throws, any change it made to <code>state</code> is discarded.</li>
+</ol>
+<h2 id="3-call-it-from-your-worker"><a class="anchor" href="#3-call-it-from-your-worker" aria-label="Link to this section">#</a>3. Call it from your Worker</h2>
+<p>Create <code>src/index.ts</code>:</p>
+<figure class="code has-title"><figcaption><span>src/index.ts</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">ActorError</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;actors-poc&quot;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">Cart</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;./actors/cart&quot;</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">default</span> {
+  <span class="hljs-keyword">async</span> <span class="hljs-title function_">fetch</span>(<span class="hljs-attr">request</span>: <span class="hljs-title class_">Request</span>): <span class="hljs-title class_">Promise</span>&lt;<span class="hljs-title class_">Response</span>&gt; {
+    <span class="hljs-keyword">const</span> url = <span class="hljs-keyword">new</span> <span class="hljs-title function_">URL</span>(request.<span class="hljs-property">url</span>);
+    <span class="hljs-keyword">const</span> [, resource, cartId, sku] = url.<span class="hljs-property">pathname</span>.<span class="hljs-title function_">split</span>(<span class="hljs-string">&quot;/&quot;</span>);
+    <span class="hljs-keyword">if</span> (resource !== <span class="hljs-string">&quot;carts&quot;</span> || !cartId) <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Response</span>(<span class="hljs-string">&quot;Not found&quot;</span>, { <span class="hljs-attr">status</span>: <span class="hljs-number">404</span> });
+
+    <span class="hljs-keyword">const</span> cart = <span class="hljs-title class_">Cart</span>.<span class="hljs-title function_">get</span>(cartId);
+    <span class="hljs-keyword">try</span> {
+      <span class="hljs-keyword">if</span> (request.<span class="hljs-property">method</span> === <span class="hljs-string">&quot;POST&quot;</span> &amp;&amp; sku) {
+        <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>(<span class="hljs-keyword">await</span> cart.<span class="hljs-title function_">add</span>(sku, <span class="hljs-title class_">Number</span>(url.<span class="hljs-property">searchParams</span>.<span class="hljs-title function_">get</span>(<span class="hljs-string">&quot;quantity&quot;</span>) ?? <span class="hljs-number">1</span>)));
+      }
+      <span class="hljs-keyword">if</span> (request.<span class="hljs-property">method</span> === <span class="hljs-string">&quot;DELETE&quot;</span> &amp;&amp; sku) <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>(<span class="hljs-keyword">await</span> cart.<span class="hljs-title function_">remove</span>(sku));
+      <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>(<span class="hljs-keyword">await</span> cart.<span class="hljs-title function_">list</span>());
+    } <span class="hljs-keyword">catch</span> (err) {
+      <span class="hljs-keyword">if</span> (err <span class="hljs-keyword">instanceof</span> <span class="hljs-title class_">ActorError</span> &amp;&amp; err.<span class="hljs-property">kind</span> === <span class="hljs-string">&quot;action&quot;</span>) {
+        <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>({ <span class="hljs-attr">error</span>: err.<span class="hljs-property">message</span> }, { <span class="hljs-attr">status</span>: <span class="hljs-number">400</span> });
+      }
+      <span class="hljs-keyword">throw</span> err;
+    }
+  },
+};</code></pre></figure>
+<p>In the code above, you have:</p>
+<ol>
+<li>Got a typed reference with <code>Cart.get(cartId)</code>. Every request with the same <code>cartId</code> reaches the same instance.</li>
+<li>Called actions like ordinary async methods. <code>cart.add(&quot;x&quot;, &quot;2&quot;)</code> would not compile.</li>
+<li>Mapped errors the action threw (<code>kind: &quot;action&quot;</code>) to HTTP 400 and let everything else fail loudly.</li>
+</ol>
+<aside class="callout callout-caution" role="note"><p class="callout-title">Caution</p><p>In a real app, derive <code>cartId</code> from the authenticated user, not from the URL. An actor key is an address, not proof of who is asking. Refer to <a href="best-practices/rules-of-actors.html#derive-keys-from-authenticated-identity">Rules of actors</a>.</p>
+</aside>
+<h2 id="4-run-it-locally"><a class="anchor" href="#4-run-it-locally" aria-label="Link to this section">#</a>4. Run it locally</h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">pnpm dev</code></pre></figure>
+<p>The CLI discovers <code>Cart</code>, writes <code>wrangler.jsonc</code> and the generated entry points in <code>.actors/</code>, and starts <code>wrangler dev</code>. You should see:</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-plaintext">✓ 1 actor: Cart src/actors/cart.ts
+✓ worker: src/index.ts
+✓ wrangler.jsonc: created wrangler.jsonc
+◆ Actor Explorer: http://localhost:8787/__actors</code></pre></figure>
+<p>In a second terminal, add an item, try an invalid one, and read the cart:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">curl -X POST <span class="hljs-string">&quot;localhost:8787/carts/alice/sku-123?quantity=2&quot;</span>
+curl -X POST <span class="hljs-string">&quot;localhost:8787/carts/alice/sku-123?quantity=0&quot;</span>
+curl localhost:8787/carts/alice</code></pre></figure>
+<p>The second request returns <code>400</code> and the cart still has two items: the failed action changed nothing.</p>
+<p>Add <code>.actors/</code> and <code>.wrangler/</code> to your <code>.gitignore</code>. Both are reproducible.</p>
+<h2 id="5-inspect-the-actor"><a class="anchor" href="#5-inspect-the-actor" aria-label="Link to this section">#</a>5. Inspect the actor</h2>
+<p>Open <code>http://localhost:8787/__actors</code> and select <strong>Cart → alice</strong>. You can see the saved state, every recent call (including the failed one, with its stack trace), and invoke actions with JSON arguments.</p>
+<p>From the terminal:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">pnpm <span class="hljs-built_in">exec</span> actors inspect Cart alice</code></pre></figure>
+<p>Stop and restart <code>pnpm dev</code>, then read the cart again. The state survives because it lives in the instance&#39;s SQLite storage, not in memory.</p>
+<h2 id="6-deploy"><a class="anchor" href="#6-deploy" aria-label="Link to this section">#</a>6. Deploy</h2>
+<p>Log in to Wrangler, then deploy:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">pnpm <span class="hljs-built_in">exec</span> wrangler login
+pnpm run deploy</code></pre></figure>
+<p>Use <code>pnpm run deploy</code>, not <code>pnpm deploy</code>: pnpm has a built-in <code>deploy</code> command that runs instead.</p>
+<p>The production build does not include the Actor Explorer or any inspection routes.</p>
+<aside class="callout callout-caution" role="note"><p class="callout-title">Caution</p><p>This proof of concept has been run locally and bundled with <code>wrangler deploy --dry-run</code>, but not tested on a real account. Expect rough edges.</p>
+</aside>
+<h2 id="summary-and-final-code"><a class="anchor" href="#summary-and-final-code" aria-label="Link to this section">#</a>Summary and final code</h2>
+<p>By finishing this guide, you have:</p>
+<ul>
+<li>Defined an actor with typed state and actions.</li>
+<li>Called it from a Worker with compile-time checked arguments and results.</li>
+<li>Seen a failed action leave state untouched.</li>
+<li>Inspected live state locally and confirmed it survives a restart.</li>
+</ul>
+<p>The full project is the four files above: <code>package.json</code>, <code>tsconfig.json</code>, <code>src/actors/cart.ts</code> and <code>src/index.ts</code>. Everything else is generated.</p>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="best-practices/rules-of-actors.html">Rules of actors</a>: design actors that scale and fail safely.</li>
+<li><a href="tutorials/build-a-chat-room.html">Build a chat room</a>: add WebSockets.</li>
+<li><a href="tutorials/build-an-ai-agent.html">Build a persistent AI agent</a>: memory, tools, scheduling and rollback.</li>
+<li><a href="api/index.html">API reference</a>: everything <code>actor()</code> accepts.</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/get-started.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="index.html"><span>Previous</span>Overview</a><a class="next" href="concepts/what-are-actors.html"><span>Next</span>What are actors?</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#prerequisites">Prerequisites</a></li><li class="d2"><a href="#1-create-a-project">1. Create a project</a></li><li class="d2"><a href="#2-write-an-actor">2. Write an actor</a></li><li class="d2"><a href="#3-call-it-from-your-worker">3. Call it from your Worker</a></li><li class="d2"><a href="#4-run-it-locally">4. Run it locally</a></li><li class="d2"><a href="#5-inspect-the-actor">5. Inspect the actor</a></li><li class="d2"><a href="#6-deploy">6. Deploy</a></li><li class="d2"><a href="#summary-and-final-code">Summary and final code</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

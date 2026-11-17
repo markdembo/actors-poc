@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Action context · Actors (unofficial PoC)</title>
+<meta name="description" content="Every action and connection hook receives an ActionContext as its first argument, usually destructured or named ctx.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="index.html">API reference</a></li><li><a href="actor.html">actor()</a></li><li><a href="action-context.html" aria-current="page" class="active">Action context</a></li><li><a href="connections.html">Connections</a></li><li><a href="errors.html">Errors</a></li><li><a href="durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">API</p>
+    <article><h1>Action context</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>Every action and connection hook receives an <code>ActionContext</code> as its first argument, usually destructured or named <code>ctx</code>.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-attr">increment</span>: <span class="hljs-function">(<span class="hljs-params">ctx, <span class="hljs-attr">by</span>: <span class="hljs-built_in">number</span></span>) =&gt;</span> {
+  ctx.<span class="hljs-property">state</span>.<span class="hljs-property">count</span> += by;
+  ctx.<span class="hljs-title function_">log</span>(<span class="hljs-string">&quot;incremented&quot;</span>, by);
+  <span class="hljs-keyword">return</span> ctx.<span class="hljs-property">state</span>.<span class="hljs-property">count</span>;
+},</code></pre></figure>
+<h2 id="identity"><a class="anchor" href="#identity" aria-label="Link to this section">#</a>Identity</h2>
+<h3 id="state"><a class="anchor" href="#state" aria-label="Link to this section">#</a><code>state</code></h3>
+<p><code>state: S</code></p>
+<p>A private draft of this instance&#39;s state. Mutate it, or assign a new object to <code>ctx.state</code>. It is committed when the action returns and discarded when it throws.</p>
+<h3 id="actor"><a class="anchor" href="#actor" aria-label="Link to this section">#</a><code>actor</code></h3>
+<p><code>readonly actor: string</code></p>
+<p>The actor type name, such as <code>&quot;Counter&quot;</code>.</p>
+<h3 id="key"><a class="anchor" href="#key" aria-label="Link to this section">#</a><code>key</code></h3>
+<p><code>readonly key: string</code></p>
+<p>This instance&#39;s key, such as <code>&quot;customer-123&quot;</code>.</p>
+<h2 id="logging"><a class="anchor" href="#logging" aria-label="Link to this section">#</a>Logging</h2>
+<h3 id="log"><a class="anchor" href="#log" aria-label="Link to this section">#</a><code>log</code></h3>
+<p><code>log(...args: unknown[]): void</code></p>
+<p>Writes a line to the console and attaches it to this invocation in the Actor Explorer and <code>actors inspect</code>. Non-strings are JSON-encoded. Each invocation keeps up to 50 lines.</p>
+<h2 id="scheduling"><a class="anchor" href="#scheduling" aria-label="Link to this section">#</a>Scheduling</h2>
+<h3 id="schedule"><a class="anchor" href="#schedule" aria-label="Link to this section">#</a><code>schedule</code></h3>
+<p><code>schedule(when: number | Date, action: string, ...args: unknown[]): string</code></p>
+<p>Runs one of this actor&#39;s actions later, with the given arguments, through the normal queued and transactional path. The invocation is recorded with source <code>schedule</code>.</p>
+<h4 id="parameters"><a class="anchor" href="#parameters" aria-label="Link to this section">#</a>Parameters</h4>
+<ul>
+<li><code>when</code> <code>number | Date</code><ul>
+<li>Seconds from now, or an absolute time.</li>
+</ul>
+</li>
+<li><code>action</code> <code>string</code><ul>
+<li>The name of an action on this actor. Unknown names throw immediately.</li>
+</ul>
+</li>
+<li><code>...args</code> <code>unknown[]</code><ul>
+<li>Plain JSON arguments.</li>
+</ul>
+</li>
+</ul>
+<h4 id="returns"><a class="anchor" href="#returns" aria-label="Link to this section">#</a>Returns</h4>
+<p>The schedule ID, for <code>cancelSchedule</code>.</p>
+<aside class="callout callout-note" role="note"><p class="callout-title">Note</p><p>Scheduling is transactional: if the current action throws, nothing is scheduled. Delivery is at least once: a scheduled action that throws is attempted up to 3 times in total (retries after 2 and then 4 seconds), then dropped. The failures stay visible in the invocation log. Make scheduled actions idempotent.</p>
+</aside>
+<h3 id="cancelschedule"><a class="anchor" href="#cancelschedule" aria-label="Link to this section">#</a><code>cancelSchedule</code></h3>
+<p><code>cancelSchedule(id: string): void</code></p>
+<p>Cancels a pending schedule when the current action commits.</p>
+<h2 id="websockets"><a class="anchor" href="#websockets" aria-label="Link to this section">#</a>WebSockets</h2>
+<h3 id="broadcast"><a class="anchor" href="#broadcast" aria-label="Link to this section">#</a><code>broadcast</code></h3>
+<p><code>broadcast(message: string | object | number | boolean | null, options?: BroadcastOptions): void</code></p>
+<p>Queues a message to every open connection, or to a subset. It is sent only if the current action commits. Strings are sent as they are; everything else is JSON-encoded. Works in any action, not only in connection hooks.</p>
+<h4 id="parameters-1"><a class="anchor" href="#parameters-1" aria-label="Link to this section">#</a>Parameters</h4>
+<ul>
+<li><code>options.except</code> <code>string | string[]</code> Optional<ul>
+<li>Connection IDs to skip, such as the sender&#39;s <code>conn.id</code>.</li>
+</ul>
+</li>
+<li><code>options.only</code> <code>string[]</code> Optional<ul>
+<li>Send only to these connection IDs.</li>
+</ul>
+</li>
+</ul>
+<h3 id="connections"><a class="anchor" href="#connections" aria-label="Link to this section">#</a><code>connections</code></h3>
+<p><code>connections(): ConnectionInfo&lt;C&gt;[]</code></p>
+<p>The open WebSocket connections to this instance: <code>{ id, data, connectedAt }</code>. During <code>onConnect</code>, the new connection is not listed yet. During <code>onClose</code>, the closing one is not listed anymore.</p>
+<h2 id="escape-hatches"><a class="anchor" href="#escape-hatches" aria-label="Link to this section">#</a>Escape hatches</h2>
+<h3 id="env"><a class="anchor" href="#env" aria-label="Link to this section">#</a><code>env</code></h3>
+<p><code>readonly env: Cloudflare.Env</code></p>
+<p>The Worker environment: bindings, variables and secrets.</p>
+<h3 id="sql"><a class="anchor" href="#sql" aria-label="Link to this section">#</a><code>sql</code></h3>
+<p><code>readonly sql: SqlStorage</code></p>
+<p>The instance&#39;s raw <a href="https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/" target="_blank" rel="noopener">SQLite API</a> ↗. Writes apply immediately and are <strong>not</strong> rolled back when the action throws. Avoid table names starting with <code>_actor</code>.</p>
+<h3 id="storage"><a class="anchor" href="#storage" aria-label="Link to this section">#</a><code>storage</code></h3>
+<p><code>readonly storage: DurableObjectStorage</code></p>
+<p>The instance&#39;s raw <a href="https://developers.cloudflare.com/durable-objects/api/storage-api/" target="_blank" rel="noopener">storage API</a> ↗. Same caveat as <code>sql</code>. Don&#39;t use <code>setAlarm</code> here: the runtime owns the alarm for <code>schedule</code>.</p>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="../semantics.html">Semantics</a></li>
+<li><a href="connections.html">Connections</a></li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/api/action-context.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="actor.html"><span>Previous</span>actor()</a><a class="next" href="connections.html"><span>Next</span>Connections</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#identity">Identity</a></li><li class="d3"><a href="#state">state</a></li><li class="d3"><a href="#actor">actor</a></li><li class="d3"><a href="#key">key</a></li><li class="d2"><a href="#logging">Logging</a></li><li class="d3"><a href="#log">log</a></li><li class="d2"><a href="#scheduling">Scheduling</a></li><li class="d3"><a href="#schedule">schedule</a></li><li class="d3"><a href="#cancelschedule">cancelSchedule</a></li><li class="d2"><a href="#websockets">WebSockets</a></li><li class="d3"><a href="#broadcast">broadcast</a></li><li class="d3"><a href="#connections">connections</a></li><li class="d2"><a href="#escape-hatches">Escape hatches</a></li><li class="d3"><a href="#env">env</a></li><li class="d3"><a href="#sql">sql</a></li><li class="d3"><a href="#storage">storage</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

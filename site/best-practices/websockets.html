@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebSockets · Actors (unofficial PoC)</title>
+<meta name="description" content="Actors accept WebSocket connections through Actor.connect(). Each socket event (onConnect, onMessage, onClose) runs as an action: queued, transactional, and rolled back if it throws. Messages you send go out only after the event's changes are saved.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="rules-of-actors.html">Rules of actors</a></li><li><a href="websockets.html" aria-current="page" class="active">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Best practices</p>
+    <article><h1>WebSockets</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>Actors accept WebSocket connections through <code>Actor.connect()</code>. Each socket event (<code>onConnect</code>, <code>onMessage</code>, <code>onClose</code>) runs as an action: queued, transactional, and rolled back if it throws. Messages you send go out only after the event&#39;s changes are saved.</p>
+<p>This page covers how to use that model well. Refer to the <a href="../api/connections.html">connections API</a> for every option.</p>
+<h2 id="authenticate-in-the-worker-then-connect"><a class="anchor" href="#authenticate-in-the-worker-then-connect" aria-label="Link to this section">#</a>Authenticate in the Worker, then connect</h2>
+<p>Your Worker sees the upgrade request first. Verify who is connecting there, and pass the verified identity as connection data. The actor never sees the raw request, and clients can&#39;t forge the data.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-keyword">const</span> session = <span class="hljs-keyword">await</span> <span class="hljs-title function_">requireSession</span>(request); <span class="hljs-comment">// your auth</span>
+<span class="hljs-keyword">return</span> <span class="hljs-title class_">ChatRoom</span>.<span class="hljs-title function_">connect</span>(roomId, request, { <span class="hljs-attr">data</span>: { <span class="hljs-attr">user</span>: session.<span class="hljs-property">userId</span> } });
+
+<span class="hljs-comment">// 🔴 Identity read from a message the client controls.</span>
+<span class="hljs-title function_">onMessage</span>(<span class="hljs-params">ctx, conn, raw</span>) {
+  <span class="hljs-keyword">const</span> { user, text } = <span class="hljs-title class_">JSON</span>.<span class="hljs-title function_">parse</span>(<span class="hljs-title class_">String</span>(raw));
+  ctx.<span class="hljs-title function_">broadcast</span>({ user, text });
+}</code></pre></figure>
+<h2 id="refuse-connections-in-onconnect"><a class="anchor" href="#refuse-connections-in-onconnect" aria-label="Link to this section">#</a>Refuse connections in <code>onConnect</code></h2>
+<p>Throwing in <code>onConnect</code> returns HTTP 403 with your message, and no socket is opened. Check membership, bans and capacity there.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-title function_">onConnect</span>(<span class="hljs-params">ctx, conn</span>) {
+  <span class="hljs-keyword">if</span> (!ctx.<span class="hljs-property">state</span>.<span class="hljs-property">members</span>.<span class="hljs-title function_">includes</span>(conn.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>)) <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Error</span>(<span class="hljs-string">&quot;Not a member of this room&quot;</span>);
+  <span class="hljs-keyword">if</span> (ctx.<span class="hljs-title function_">connections</span>().<span class="hljs-property">length</span> &gt;= <span class="hljs-number">500</span>) <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Error</span>(<span class="hljs-string">&quot;Room is full&quot;</span>);
+},</code></pre></figure>
+<h2 id="treat-every-message-as-untrusted-input"><a class="anchor" href="#treat-every-message-as-untrusted-input" aria-label="Link to this section">#</a>Treat every message as untrusted input</h2>
+<p>Parse and validate inside <code>onMessage</code>, and limit size. To report a problem to the client, catch it and reply. If you throw instead, your reply is discarded along with everything else.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ The client learns what went wrong; state is untouched.</span>
+<span class="hljs-title function_">onMessage</span>(<span class="hljs-params">ctx, conn, raw</span>) {
+  <span class="hljs-keyword">const</span> parsed = <span class="hljs-title function_">parseClientMessage</span>(raw); <span class="hljs-comment">// returns { ok, value } or { ok: false, error }</span>
+  <span class="hljs-keyword">if</span> (!parsed.<span class="hljs-property">ok</span>) {
+    conn.<span class="hljs-title function_">send</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;error&quot;</span>, <span class="hljs-attr">error</span>: parsed.<span class="hljs-property">error</span> });
+    <span class="hljs-keyword">return</span>;
+  }
+  <span class="hljs-comment">// ...apply parsed.value</span>
+},
+
+<span class="hljs-comment">// 🔴 The client never hears about the error.</span>
+<span class="hljs-title function_">onMessage</span>(<span class="hljs-params">ctx, conn, raw</span>) {
+  <span class="hljs-keyword">const</span> msg = <span class="hljs-title class_">JSON</span>.<span class="hljs-title function_">parse</span>(<span class="hljs-title class_">String</span>(raw)); <span class="hljs-comment">// throws on bad input; any reply is discarded</span>
+},</code></pre></figure>
+<h2 id="resync-on-reconnect"><a class="anchor" href="#resync-on-reconnect" aria-label="Link to this section">#</a>Resync on reconnect</h2>
+<p>Delivery is at most once. A client that is offline, reconnecting or slow misses broadcasts. Give every durable event an increasing ID, send recent history in <code>onConnect</code>, and let clients ask for what they missed.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-title function_">onConnect</span>(<span class="hljs-params">ctx, conn</span>) {
+  conn.<span class="hljs-title function_">send</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;welcome&quot;</span>, <span class="hljs-attr">messages</span>: ctx.<span class="hljs-property">state</span>.<span class="hljs-property">messages</span>.<span class="hljs-title function_">slice</span>(-<span class="hljs-number">50</span>) });
+},
+<span class="hljs-comment">// client keeps the last id it saw and, after reconnecting, fetches newer messages</span></code></pre></figure>
+<h2 id="broadcast-changes-not-whole-state"><a class="anchor" href="#broadcast-changes-not-whole-state" aria-label="Link to this section">#</a>Broadcast changes, not whole state</h2>
+<p>Each broadcast is sent once per open socket. Send the event that happened, not the full document.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+ctx.<span class="hljs-title function_">broadcast</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;message&quot;</span>, message });
+
+<span class="hljs-comment">// 🔴 Resends everything to everyone on every message.</span>
+ctx.<span class="hljs-title function_">broadcast</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;state&quot;</span>, <span class="hljs-attr">state</span>: ctx.<span class="hljs-property">state</span> });</code></pre></figure>
+<p>For very chatty rooms, collect several events and broadcast them as one array. Cloudflare&#39;s guidance is 10–100 logical messages per frame.</p>
+<h2 id="derive-presence-from-live-connections"><a class="anchor" href="#derive-presence-from-live-connections" aria-label="Link to this section">#</a>Derive presence from live connections</h2>
+<p><code>ctx.connections()</code> lists the sockets that are open right now, with their data. A stored &quot;online&quot; list goes stale when a process dies before <code>onClose</code> runs.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-attr">online</span>: <span class="hljs-function">(<span class="hljs-params">ctx</span>) =&gt;</span> [...<span class="hljs-keyword">new</span> <span class="hljs-title class_">Set</span>(ctx.<span class="hljs-title function_">connections</span>().<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">c</span>) =&gt;</span> c.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>))],</code></pre></figure>
+<h2 id="know-where-one-room-stops-scaling"><a class="anchor" href="#know-where-one-room-stops-scaling" aria-label="Link to this section">#</a>Know where one room stops scaling</h2>
+<p>Every message is one transactional action, and every broadcast is one send per socket. One instance is a single thread with a soft limit of about a thousand requests per second. Large rooms run out of fan-out first, around 5,000 members sending 20 messages a second. Split the room by meaning (threads or channels) before you reach that point. Refer to <a href="../findings.html#38-sharding-what-can-and-cant-be-automated">Sharding</a>.</p>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li>
+<li><a href="../api/connections.html">Connections API</a></li>
+<li><a href="../semantics.html#websockets">Semantics: WebSockets</a></li>
+<li><a href="https://developers.cloudflare.com/durable-objects/best-practices/websockets/" target="_blank" rel="noopener">Durable Objects: WebSockets</a> ↗</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/best-practices/websockets.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="rules-of-actors.html"><span>Previous</span>Rules of actors</a><a class="next" href="../api/index.html"><span>Next</span>API reference</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#authenticate-in-the-worker-then-connect">Authenticate in the Worker, then connect</a></li><li class="d2"><a href="#refuse-connections-in-onconnect">Refuse connections in onConnect</a></li><li class="d2"><a href="#treat-every-message-as-untrusted-input">Treat every message as untrusted input</a></li><li class="d2"><a href="#resync-on-reconnect">Resync on reconnect</a></li><li class="d2"><a href="#broadcast-changes-not-whole-state">Broadcast changes, not whole state</a></li><li class="d2"><a href="#derive-presence-from-live-connections">Derive presence from live connections</a></li><li class="d2"><a href="#know-where-one-room-stops-scaling">Know where one room stops scaling</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

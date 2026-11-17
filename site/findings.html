@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Findings and recommendations · Actors (unofficial PoC)</title>
+<meta name="description" content="Bottom line: the hypothesis holds for Personas A and B. In the comparison app, application code needs zero Durable Objects concepts (down from 15), zero hand-written config (down from 10 lines), and 35% less code, while gaining an invocation log, an Explorer, rollback semantics and redaction. Everything runs on stock Workers, Durable Objects and Wrangler, with no new runtime or deploy backend.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="index.html">Overview</a></li><li><a href="get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="concepts/what-are-actors.html">What are actors?</a></li><li><a href="concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="api/index.html">API reference</a></li><li><a href="api/actor.html">actor()</a></li><li><a href="api/action-context.html">Action context</a></li><li><a href="api/connections.html">Connections</a></li><li><a href="api/errors.html">Errors</a></li><li><a href="api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="reference/cli.html">CLI</a></li><li><a href="reference/configuration.html">Configuration</a></li><li><a href="reference/limits.html">Limits</a></li><li><a href="semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="findings.html" aria-current="page" class="active">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">About</p>
+    <article><h1>Findings and recommendations</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p><strong>Bottom line:</strong> the hypothesis holds for Personas A and B. In the comparison app, application code needs <strong>zero</strong> Durable Objects concepts (down from 15), <strong>zero</strong> hand-written config (down from 10 lines), and <strong>35% less code</strong>, while gaining an invocation log, an Explorer, rollback semantics and redaction. Everything runs on stock Workers, Durable Objects and Wrangler, with no new runtime or deploy backend.</p>
+<p>We do not recommend shipping this as a new framework yet. Two of the findings below (§3.1 and §3.2) suggest the work should be folded into existing efforts.</p>
+<p>Validated with Wrangler 4.163.0, <code>@cloudflare/workers-types</code> 5.20261116.1 and compatibility date 2026-09-01, locally (<code>wrangler dev</code>) and with <code>wrangler deploy --dry-run</code>. Nothing was deployed to a Cloudflare account.</p>
+<h2 id="1-p0-acceptance-criteria"><a class="anchor" href="#1-p0-acceptance-criteria" aria-label="Link to this section">#</a>1. P0 acceptance criteria</h2>
+<div class="table-wrap"><table><thead><tr><th></th><th>Criterion</th><th>Status</th><th>Evidence</th></tr></thead><tbody><tr><td>FR1</td><td>Counter with no DO subclass</td><td>✅</td><td><code>examples/counter/src/actors/counter.ts</code></td></tr>
+<tr><td>FR2</td><td><code>Counter.get(&quot;customer-123&quot;)</code> always targets the same instance, scoped to the deployment</td><td>✅</td><td><code>&quot;&lt;Type&gt;:&lt;key&gt;&quot;</code> via <code>idFromName</code>. Scope is documented in semantics.md.</td></tr>
+<tr><td>FR3</td><td>Mutation survives restart; failed transaction leaves no partial state</td><td>✅</td><td>e2e: restart, throw, invalid state, schedule rollback</td></tr>
+<tr><td>FR4</td><td>Bad method or argument types fail to compile; no retries, and that is documented</td><td>✅</td><td><code>tests/types/inference.ts</code> (10 <code>@ts-expect-error</code> cases)</td></tr>
+<tr><td>FR5</td><td>Fresh project runs and deploys with no hand-written DO config; generated files are inspectable and reproducible</td><td>✅ (deploy is a dry run)</td><td><code>actors generate</code> is deterministic (e2e). <code>wrangler deploy --dry-run</code> bundles.</td></tr>
+<tr><td>FR6</td><td>Find an actor, inspect state, run an action, see the change</td><td>✅</td><td>Explorer at <code>/__actors</code> and <code>actors inspect</code>, built on Wrangler&#39;s Local Explorer API. Tested e2e and by hand in a browser.</td></tr>
+<tr><td>FR7 (P1)</td><td>Failure traceable to actor, method, error and logs</td><td>✅</td><td>Invocation log with <code>ctx.log</code> lines, error, <code>code</code> and stack</td></tr>
+<tr><td>FR8 (P1)</td><td>Native DO features without leaving the abstraction</td><td>✅</td><td><code>ctx.schedule</code> (alarms), <code>ctx.sql</code>, <code>ctx.storage</code>, <code>ctx.env</code>, user DO classes re-exported</td></tr>
+<tr><td>FR9</td><td>Per-customer agent and counter examples</td><td>✅</td><td><code>examples/agent</code> and <code>examples/counter</code></td></tr>
+<tr><td>FR10</td><td>Reproducible comparison</td><td>✅ partial</td><td>Static comparison against raw DO. No PartyServer comparison (not applicable) and no timed user study (needs participants). See <code>comparison/README.md</code>.</td></tr>
+<tr><td>§8.6</td><td>Explorer local-only; admin routes not in production; no secrets in inspection</td><td>✅</td><td>Localhost check, separate production entry (verified by bundle scan), <code>redact.state</code> and <code>redact.args</code></td></tr></tbody></table></div>
+<h2 id="2-success-metrics-prd-11"><a class="anchor" href="#2-success-metrics-prd-11" aria-label="Link to this section">#</a>2. Success metrics (PRD §11)</h2>
+<div class="table-wrap"><table><thead><tr><th>Metric</th><th>Target</th><th>Result</th></tr></thead><tbody><tr><td>Manual DO configuration</td><td>Zero</td><td><strong>Zero.</strong> The binding and migration are written by <code>actors generate</code>.</td></tr>
+<tr><td>Infrastructure boilerplate</td><td>≥70% less</td><td><strong>Not measured on its own.</strong> Total code is 35% less, and most of the 63-line difference is infrastructure. Splitting infrastructure from logic needs a judgment call (see <code>comparison/README.md</code>).</td></tr>
+<tr><td>Type safety</td><td>All public methods checked at compile time</td><td><strong>Yes</strong>, including optional and default parameters and inferred return types</td></tr>
+<tr><td>Time to inspect state</td><td>&lt; 30 s</td><td><code>actors inspect</code> answers in under 1 s once you know the key. This is tool latency, not a user study.</td></tr>
+<tr><td>Time to first local app, to first deploy, to diagnose an injected error</td><td>10 min / 90% success / 2 min</td><td><strong>Not measured.</strong> This needs the 5–10 person study. The tasks are ready: counter, agent, injected <code>tool {</code> failure.</td></tr></tbody></table></div>
+<h2 id="3-things-we-learned-that-change-the-plan"><a class="anchor" href="#3-things-we-learned-that-change-the-plan" aria-label="Link to this section">#</a>3. Things we learned that change the plan</h2>
+<h3 id="31-cloudflareactors-already-exists-on-npm"><a class="anchor" href="#31-cloudflareactors-already-exists-on-npm" aria-label="Link to this section">#</a>3.1 <code>@cloudflare/actors</code> already exists on npm</h3>
+<p>The PRD&#39;s working name is taken by an existing Cloudflare package, &quot;An easier way to build with Cloudflare Durable Objects&quot; (<a href="https://github.com/cloudflare/actors" target="_blank" rel="noopener">cloudflare/actors</a>, <code>0.0.1-beta.6</code>). The overlap the PRD calls Risk 3 (framework fragmentation) is real. This PoC uses the package name <code>actors-poc</code> to avoid confusion.</p>
+<p><strong>How it compares.</strong> This is based on reading its README, examples and core source in November 2026. We did not install or run it.</p>
+<p>The two projects aim at different things. <code>@cloudflare/actors</code> makes Durable Object classes nicer to write, but the developer still has to understand Durable Objects. This PoC aims at the PRD&#39;s goal of not needing to understand them at all.</p>
+<p>Both landed on several of the same ideas:</p>
+<ul>
+<li><code>MyActor.get(id)</code> with no <code>env</code> passed in, using the <code>cloudflare:workers</code> env import</li>
+<li>JSON state in the object&#39;s own SQLite storage</li>
+<li>multiple scheduled jobs on one platform alarm</li>
+<li>a way to list instances</li>
+</ul>
+<div class="table-wrap"><table><thead><tr><th></th><th><code>@cloudflare/actors</code></th><th>This PoC</th></tr></thead><tbody><tr><td>Defining an actor</td><td>Class extending <code>Actor</code> (a <code>DurableObject</code> subclass)</td><td><code>actor({ state, actions })</code>, no class</td></tr>
+<tr><td>Wrangler config</td><td>Hand-written; binding, <code>class_name</code> and migration must match the class name</td><td>Generated (<code>actors generate</code>)</td></tr>
+<tr><td>New actor type</td><td>New class, binding and migration</td><td>Nothing: one <code>ActorHost</code> class runs every type (§3.3)</td></tr>
+<tr><td>When state is saved</td><td><code>@Persist</code> writes on every property change, including nested ones via a deep Proxy; the writes are not awaited</td><td>Once, in one transaction, when the action returns</td></tr>
+<tr><td>Method throws</td><td>Changes made before the throw are already saved</td><td>Everything is discarded, including schedules</td></tr>
+<tr><td>Overlapping calls</td><td>Not specified in the docs</td><td>One action at a time per instance, in arrival order</td></tr>
+<tr><td>Value types</td><td>Also Date, Map, Set, RegExp and Error (type markers)</td><td>Strict JSON; other types are rejected with a fix-it message</td></tr>
+<tr><td>Instance list</td><td>Opt-in (<code>handler(..., { track })</code>), only for calls through <code>handler()</code>; listing means raw SQL on the <code>_cf_actors</code> instance</td><td>Every local instance via Wrangler&#39;s Local Explorer; dev only (§3.2)</td></tr>
+<tr><td>Tooling</td><td>Library only</td><td>CLI, config generation, Actor Explorer, <code>actors inspect</code>, call log, redaction</td></tr>
+<tr><td>Retries</td><td>Opt-in helpers (<code>tryN</code>, jittered backoff, <code>isErrorRetryable</code>)</td><td>None, by design; typed <code>ActorError</code> with <code>kind</code> and <code>code</code></td></tr></tbody></table></div>
+<p>Features it has that this PoC lacks:</p>
+<ul>
+<li>HTTP routing (<code>handler()</code>, <code>nameFromRequest</code>)</li>
+<li>per-class location hints</li>
+<li>cron schedules</li>
+<li>migrations for user SQL tables</li>
+<li>lifecycle hooks (<code>onInit</code>, <code>onAlarm</code>, <code>onPersist</code>)</li>
+<li>Worker entrypoint helpers</li>
+</ul>
+<p>The biggest design difference is when state is saved. <code>@Persist</code> saves each change as it happens, which is simple and works with ordinary class code. This PoC saves once per action, so a failed action leaves nothing behind. The two suit different needs, and they could coexist as options.</p>
+<p><strong>Recommendation:</strong> rather than a second framework, these pieces could be offered to that project:</p>
+<ul>
+<li>save-on-return transactions, as a mode of <code>@Persist</code></li>
+<li>config generation</li>
+<li>the Explorer, built on Wrangler&#39;s Local Explorer</li>
+<li><code>actor({...})</code> as an optional layer over its <code>Actor</code> class</li>
+</ul>
+<p>One decision needs agreement with that project first. Running every type in one host class (§3.3) gives up per-class location hints, which its design supports.</p>
+<h3 id="32-wranglers-local-explorer-already-enumerates-durable-objects-locally-now-used"><a class="anchor" href="#32-wranglers-local-explorer-already-enumerates-durable-objects-locally-now-used" aria-label="Link to this section">#</a>3.2 Wrangler&#39;s Local Explorer already enumerates Durable Objects locally (now used)</h3>
+<p><code>wrangler dev</code> serves <code>/cdn-cgi/local/explorer/api</code>. It lists every local object <strong>by name</strong> (<code>Counter:customer-123</code>) and runs SQL against an object&#39;s storage by name. The PRD assumed there was no enumeration, so the first version of the PoC kept its own dev-only index (FR6). <strong>The Explorer now reads through Wrangler&#39;s Local Explorer instead, and the custom index is gone.</strong></p>
+<ul>
+<li><strong>Instances</strong> come from the namespace&#39;s object list. Names that parse as <code>&lt;Type&gt;:&lt;key&gt;</code> for a registered type are actors. That includes instances created by the production entry, or before the Explorer existed.</li>
+<li><strong>Persisted data</strong> (state, the last 50 invocations, schedules) comes from read-only SQL on <code>_actor_state</code>, <code>_actor_log</code> and <code>_actor_schedule</code>. Reads return in about 25 ms even while a 3-second action is running, because they don&#39;t queue behind actions.</li>
+<li><strong>Live data</strong> (the running action, queue depth, next alarm, instance start time) still needs one dev-only RPC, <code>actorRuntime()</code>, because it isn&#39;t in storage.</li>
+<li><strong>Gotcha:</strong> a by-name SQL query instantiates the object, so querying a key that was never used <em>creates</em> that object. The Explorer checks the object list first. Opening an unknown key shows &quot;not created&quot; and leaves nothing behind (tested).</li>
+<li><strong>Costs:</strong> instance stats (recent call and error counts) take one SQL request per instance, capped at 200 instances. Counts cover the last 100 invocations, not all time.</li>
+</ul>
+<p><strong>Next:</strong> check whether the production Cloudflare API returns object names and allows SQL queries. If it does, a production Explorer (PRD §15) becomes mostly a UI and authorization problem.</p>
+<h3 id="33-one-host-class-removes-migrations-from-the-developers-path"><a class="anchor" href="#33-one-host-class-removes-migrations-from-the-developers-path" aria-label="Link to this section">#</a>3.3 One host class removes migrations from the developer&#39;s path</h3>
+<p>Every actor type runs in one <code>ActorHost</code> class. Instances are named <code>Type:key</code>. Adding, renaming or deleting an actor type never needs a DO migration, so the only migration is the one-time <code>actors-v1</code>. This was the largest removal of cognitive load in the PoC (open question 4).
+Costs: you cannot configure Durable Object settings per type, and namespace-level metrics are not split by type. Data for a deleted actor type is orphaned rather than removed by <code>deleted_classes</code>. Renaming an actor type changes its instance names, so renames effectively start fresh. A rename map in config would fix that.</p>
+<h3 id="34-import--env--from-cloudflareworkers-is-what-makes-countergetkey-possible"><a class="anchor" href="#34-import--env--from-cloudflareworkers-is-what-makes-countergetkey-possible" aria-label="Link to this section">#</a>3.4 <code>import { env } from &quot;cloudflare:workers&quot;</code> is what makes <code>Counter.get(key)</code> possible</h3>
+<p>Without passing <code>env</code> around, references resolve the binding lazily at call time. When the binding is missing, the error says what to run instead of <code>DurableObjectNamespace binding undefined</code> (DX2).</p>
+<h3 id="35-serializing-actions-is-the-right-default-and-the-place-where-agents-hurt"><a class="anchor" href="#35-serializing-actions-is-the-right-default-and-the-place-where-agents-hurt" aria-label="Link to this section">#</a>3.5 Serializing actions is the right default, and the place where agents hurt</h3>
+<p>Running one action at a time removes a whole class of bugs. The raw version needed a hand-written queue and copy-then-commit to match it. But a 20-second LLM call blocks every other action on that agent, including reads. Future work should add read-only actions that skip the queue and read committed state, plus a &quot;commit intent, then do I/O in a scheduled step&quot; helper. This is also the natural boundary with Workflows and the Agents SDK (open question 8).</p>
+<h3 id="36-agent-runtimes-plug-in-as-raw-durable-objects-not-as-actors"><a class="anchor" href="#36-agent-runtimes-plug-in-as-raw-durable-objects-not-as-actors" aria-label="Link to this section">#</a>3.6 Agent runtimes plug in as raw Durable Objects, not as actors</h3>
+<p><a href="https://www.npmjs.com/package/@earendil-works/pi-durable" target="_blank" rel="noopener">pi-durable</a> 1.5.2, a durable agent harness from the Pi authors, runs unmodified in workerd as a plain Durable Object, using its own <code>storage/sqlite/cloudflare</code> backend and alarm pattern. It bundles without <code>nodejs_compat</code> (about 840 KiB). See <code>examples/pi-session</code>, which uses pi-ai&#39;s fake model.</p>
+<p>Hosting it <em>inside</em> <code>actor()</code> would have needed four additions:</p>
+<ul>
+<li>a per-start hook with in-memory state</li>
+<li>shared ownership of the alarm</li>
+<li>actions that skip the queue (a run takes minutes)</li>
+<li>streaming return values</li>
+</ul>
+<p>Our JSON state would also sit unused next to pi-durable&#39;s own transactional documents. Instead, <code>actors generate</code> now gives any <code>export class X extends DurableObject</code> the same zero-config treatment: a binding, a migration, a typed <code>durable(X).get(key)</code>, and Explorer listing and read-only table browsing.</p>
+<p>This suggests the right split. Actors serve Persona A (stateful services). Agent runtimes (pi-durable, the Agents SDK) bring their own durability and only need hosting and tooling.</p>
+<p>Not covered:</p>
+<ul>
+<li>a real model, or pi-durable&#39;s file and shell tools, which need a non-Node execution environment such as the Cloudflare Sandbox SDK</li>
+<li>crash recovery mid-turn</li>
+</ul>
+<h3 id="37-websockets-fit-the-actor-model-sends-must-wait-for-the-save"><a class="anchor" href="#37-websockets-fit-the-actor-model-sends-must-wait-for-the-save" aria-label="Link to this section">#</a>3.7 WebSockets fit the actor model; sends must wait for the save</h3>
+<p><code>connections: { onConnect, onMessage, onClose }</code> treats each socket event as an action: queued, saved in one transaction, rolled back if it throws. That makes one rule necessary: <code>conn.send</code> and <code>ctx.broadcast</code> must be held until the save succeeds. Otherwise a hook that broadcasts and then fails would tell clients about a change that never happened. Raw Durable Objects and PartyServer send immediately. Tests check that a rolled-back hook delivers nothing.</p>
+<p>Connection data (for example, the authenticated user) is set by the Worker&#39;s <code>Actor.connect(key, request, { data })</code> and stored on the socket, so it survives hibernation and can&#39;t be forged by the client (also tested). Presence comes from <code>ctx.connections()</code>, not stored state, so it can&#39;t go stale after a crash.</p>
+<p>Not covered:</p>
+<ul>
+<li>forced hibernation and wake (can&#39;t be triggered locally)</li>
+<li>batching many small messages into one frame (recommended by Cloudflare&#39;s docs for chatty rooms)</li>
+<li>load testing</li>
+</ul>
+<h3 id="38-sharding-what-can-and-cant-be-automated"><a class="anchor" href="#38-sharding-what-can-and-cant-be-automated" aria-label="Link to this section">#</a>3.8 Sharding: what can and can&#39;t be automated</h3>
+<p>One instance is single-threaded. Cloudflare&#39;s limits for one object are about 1,000 requests/s (soft), 10 GB storage, and 32,768 hibernatable sockets. In practice, sending every message to every user hits first: 5,000 members × 20 messages/s is 100,000 sends/s.</p>
+<p>A single ordered history (a chat room) cannot be transparently split without breaking its ordering, and the PRD lists automatic sharding as a non-goal. Patterns that keep the ordering exact:</p>
+<ul>
+<li><strong>Spread the sending.</strong> One room object orders and stores each message, then forwards batches to N connection objects that each hold a slice of the users.</li>
+<li><strong>Archive old history</strong> to R2 or D1.</li>
+<li><strong>Split by meaning:</strong> threads or channels.</li>
+</ul>
+<p>The only kind a framework can safely shard automatically is state whose order doesn&#39;t matter, such as counters and presence (an opt-in <code>shards: N</code> with a <code>merge</code> function). None of this is built yet.</p>
+<h3 id="39-smaller-findings"><a class="anchor" href="#39-smaller-findings" aria-label="Link to this section">#</a>3.9 Smaller findings</h3>
+<ul>
+<li><strong>Durable Object RPC preserves error <code>name</code>, <code>message</code> and custom properties</strong> (verified: <code>code</code> survives and <code>remote: true</code> is set), but <strong>not the remote stack</strong>. The actor runtime captures the stack into the invocation log, which is where it matters for debugging.</li>
+<li><strong>Stack traces point at the bundled file</strong> (<code>.wrangler/tmp/.../entry.dev.js:801</code>). Function names make them usable, but source-mapped <code>err.stack</code> inside the runtime would make the Explorer much better. This is a platform request.</li>
+<li><strong><code>wrangler dev &lt;script&gt;</code> overrides <code>main</code>.</strong> Dev and production use different entries from one ordinary <code>wrangler.jsonc</code>, so the explorer is absent from production bundles without a second config. <code>wrangler secret</code>, <code>wrangler tail</code> and the rest keep working.</li>
+<li><strong>Regex discovery is fragile.</strong> <code>export { Counter }</code> or re-exports from a barrel file are not found. A Wrangler or esbuild plugin that discovers actors from the module graph is the robust version.</li>
+<li><strong>Testing found a real secret leak.</strong> Redacting a state key isn&#39;t enough when the action that <em>sets</em> it records its arguments. <code>redact.args</code> was added, and the e2e suite asserts that a token never appears in inspect output.</li>
+</ul>
+<h2 id="4-answers-to-the-prds-open-questions"><a class="anchor" href="#4-answers-to-the-prds-open-questions" aria-label="Link to this section">#</a>4. Answers to the PRD&#39;s open questions</h2>
+<ol>
+<li><strong>Functional or class API?</strong> Functional <code>actor({ state, actions })</code>. TypeScript infers state from the initial value and gives every action a typed <code>ctx</code>. Caller types come from the definition without codegen. One wrinkle: empty arrays need <code>[] as Message[]</code>.</li>
+<li><strong>State model?</strong> A JSON document with draft-and-commit for the common case, and <code>ctx.sql</code> for large or relational data. The document is easy to inspect and diff (changed keys are highlighted). It is limited to 2 MB, and every write rewrites the whole document, which is fine at agent scale.</li>
+<li><strong>Serialize, or rely on native concurrency?</strong> Serialize per instance. Input gates alone do not protect state across a non-storage <code>await</code>.</li>
+<li><strong>One host class or one per type?</strong> One. See §3.3.</li>
+<li><strong>Schema versions?</strong> Unsolved. Today it&#39;s defaults plus <code>validate</code>. Next step: <code>version</code> and <code>migrate(old, fromVersion)</code> on the definition, run lazily on load.</li>
+<li><strong>Authorization?</strong> Keep it out of the actor. The key is an address. The example derives it from the URL and says so in a comment. A future <code>authorize(ctx, caller)</code> hook could take a verified identity from the Worker.</li>
+<li><strong>Build on DO or share PartyServer primitives?</strong> Build directly on Durable Objects. Real-time is now an optional <code>connections</code> block built directly on the Hibernation API: about 190 lines of runtime code. It differs from PartyServer in that hooks are transactional and sends wait for the save. A PartyServer comparison is now applicable and is not done yet.</li>
+<li><strong>Agents SDK overlap?</strong> Scheduling, persisted state and RPC overlap directly. A common actor core (identity, transactional state, schedule, invocation log) could sit under both. See §3.1 first. §3.6 shows a different path that works today: agent runtimes as zero-config raw Durable Objects.</li>
+<li><strong>Platform APIs for a production Explorer?</strong> Name-aware object listing and read-only SQL against a named object, both of which Wrangler&#39;s Local Explorer already has locally (§3.2), in the production API, source-mapped stacks (§3.9), and lifecycle events such as eviction and placement.</li>
+<li><strong>SDK, framework or built-in?</strong> Built-in. The highest-leverage pieces are small and belong in existing tools: the single-host-class pattern, <code>env</code>-based typed references, and a transactional-state helper in the DO or Agents SDK. The Explorer belongs on top of Wrangler&#39;s Local Explorer, and discovery and config belong in Wrangler.</li>
+</ol>
+<h2 id="5-known-limitations"><a class="anchor" href="#5-known-limitations" aria-label="Link to this section">#</a>5. Known limitations</h2>
+<ul>
+<li>Re-entrant calls (an actor awaiting itself, or a cycle) deadlock until the platform times out.</li>
+<li>Side effects inside actions are not rolled back. The semantics doc says so, but the API does not prevent it.</li>
+<li>The Explorer needs Wrangler&#39;s Local Explorer API (Wrangler 4.163 was verified; it is on unless <code>X_LOCAL_EXPLORER=false</code>). Without it, the Explorer shows an error naming the fix.</li>
+<li><code>redact</code> hides values in the Actor Explorer and <code>actors inspect</code>. Wrangler&#39;s own <code>/cdn-cgi/local/explorer</code> API still exposes raw local storage to anyone who can reach the dev server.</li>
+<li>The Explorer&#39;s argument entry is untyped JSON. Types are checked only at compile time.</li>
+<li><code>actors generate</code> manages <code>main</code> and expects the Worker at <code>src/index.ts</code>. <code>wrangler.toml</code> is not supported.</li>
+<li>Only <code>extends DurableObject</code> classes are discovered, and only when declared as <code>export class</code> (not re-exported). Classes extending other bases (<code>Agent</code>, <code>Server</code>, <code>@cloudflare/actors</code>&#39; <code>Actor</code>) need a hand-written binding.</li>
+<li>The Explorer&#39;s view of raw Durable Objects is read-only, and opening one starts it (its constructor runs) if it wasn&#39;t running. For pi-durable, that means opening a session resumes any unfinished work.</li>
+<li>Not load-tested or benchmarked against native Durable Objects (Risk 6). The extra cost per call is one JSON parse and stringify of the state document plus one log row.</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/findings.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="semantics.html"><span>Previous</span>Semantics</a><span></span></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#1-p0-acceptance-criteria">1. P0 acceptance criteria</a></li><li class="d2"><a href="#2-success-metrics-prd-11">2. Success metrics (PRD §11)</a></li><li class="d2"><a href="#3-things-we-learned-that-change-the-plan">3. Things we learned that change the plan</a></li><li class="d3"><a href="#31-cloudflareactors-already-exists-on-npm">3.1 @cloudflare/actors already exists on npm</a></li><li class="d3"><a href="#32-wranglers-local-explorer-already-enumerates-durable-objects-locally-now-used">3.2 Wrangler's Local Explorer already enumerates Durable Objects locally (now used)</a></li><li class="d3"><a href="#33-one-host-class-removes-migrations-from-the-developers-path">3.3 One host class removes migrations from the developer's path</a></li><li class="d3"><a href="#34-import--env--from-cloudflareworkers-is-what-makes-countergetkey-possible">3.4 import { env } from &quot;cloudflare:workers&quot; is what makes Counter.get(key) possible</a></li><li class="d3"><a href="#35-serializing-actions-is-the-right-default-and-the-place-where-agents-hurt">3.5 Serializing actions is the right default, and the place where agents hurt</a></li><li class="d3"><a href="#36-agent-runtimes-plug-in-as-raw-durable-objects-not-as-actors">3.6 Agent runtimes plug in as raw Durable Objects, not as actors</a></li><li class="d3"><a href="#37-websockets-fit-the-actor-model-sends-must-wait-for-the-save">3.7 WebSockets fit the actor model; sends must wait for the save</a></li><li class="d3"><a href="#38-sharding-what-can-and-cant-be-automated">3.8 Sharding: what can and can't be automated</a></li><li class="d3"><a href="#39-smaller-findings">3.9 Smaller findings</a></li><li class="d2"><a href="#4-answers-to-the-prds-open-questions">4. Answers to the PRD's open questions</a></li><li class="d2"><a href="#5-known-limitations">5. Known limitations</a></li></ul></aside>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

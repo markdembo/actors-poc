@@ -1,5 +1,8 @@
 # Findings and recommendations
 
+> [!WARNING]
+> **Unofficial, AI-generated proof of concept.** This is not Cloudflare documentation, and the project has no support. Read the [warning in the project README](../README.md) before using any of it.
+
 **Bottom line:** the hypothesis holds for Personas A and B. In the comparison app, application code needs **zero** Durable Objects concepts (down from 15), **zero** hand-written config (down from 10 lines), and **35% less code**, while gaining an invocation log, an Explorer, rollback semantics and redaction. Everything runs on stock Workers, Durable Objects and Wrangler, with no new runtime or deploy backend.
 
 We do not recommend shipping this as a new framework yet. Two of the findings below (§3.1 and §3.2) suggest the work should be folded into existing efforts.

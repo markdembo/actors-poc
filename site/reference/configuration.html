@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration · Actors (unofficial PoC)</title>
+<meta name="description" content="The Worker entry must be src/index.ts (or src/index.js, src/worker.ts, src/worker.js). Other classes it exports, such as Workflows or entrypoints, are re-exported automatically.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="cli.html">CLI</a></li><li><a href="configuration.html" aria-current="page" class="active">Configuration</a></li><li><a href="limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Reference</p>
+    <article><h1>Configuration</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<h2 id="project-layout"><a class="anchor" href="#project-layout" aria-label="Link to this section">#</a>Project layout</h2>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-plaintext">my-app/
+├── src/
+│   ├── index.ts          # your Worker: export default { fetch }
+│   ├── actors/*.ts       # actors: export const X = actor({...})   (any folder under src/ works)
+│   └── *.ts              # optional: export class X extends DurableObject
+├── wrangler.jsonc        # yours, with a few keys managed by `actors generate`
+└── .actors/              # generated, add to .gitignore</code></pre></figure>
+<p>The Worker entry must be <code>src/index.ts</code> (or <code>src/index.js</code>, <code>src/worker.ts</code>, <code>src/worker.js</code>). Other classes it exports, such as Workflows or entrypoints, are re-exported automatically.</p>
+<h2 id="wranglerjsonc"><a class="anchor" href="#wranglerjsonc" aria-label="Link to this section">#</a><code>wrangler.jsonc</code></h2>
+<p><code>actors generate</code> edits only these keys and keeps everything else, comments included:</p>
+<div class="table-wrap"><table><thead><tr><th>Key</th><th>Value</th></tr></thead><tbody><tr><td><code>main</code></td><td><code>.actors/entry.ts</code></td></tr>
+<tr><td><code>compatibility_date</code></td><td>Set to <code>2026-09-01</code> if missing. Must be <code>2024-04-03</code> or later.</td></tr>
+<tr><td><code>durable_objects.bindings</code></td><td>Adds <code>ACTORS</code> → <code>ActorHost</code>, and one binding per raw Durable Object class</td></tr>
+<tr><td><code>migrations</code></td><td>Adds <code>actors-v1</code> (<code>ActorHost</code>) once, and <code>actors-do-&lt;Class&gt;</code> per raw class</td></tr></tbody></table></div>
+<p>The binding name <code>ACTORS</code> and the class name <code>ActorHost</code> are reserved. Because <code>wrangler.jsonc</code> stays a normal Wrangler file, <code>wrangler secret put</code>, <code>wrangler tail</code> and the rest work without extra flags.</p>
+<h2 id="environment-variables"><a class="anchor" href="#environment-variables" aria-label="Link to this section">#</a>Environment variables</h2>
+<div class="table-wrap"><table><thead><tr><th>Variable</th><th>Values</th><th>Default</th></tr></thead><tbody><tr><td><code>ACTORS_INSTRUMENTATION</code></td><td><code>all</code>, <code>errors</code>, <code>off</code></td><td><code>all</code> in <code>actors dev</code>, <code>errors</code> in production</td></tr></tbody></table></div>
+<p>Set it in <code>vars</code> in <code>wrangler.jsonc</code>. <code>errors</code> records only failed invocations in the per-instance log, which keeps production writes down. <code>off</code> records nothing.</p>
+<h2 id="development-and-production-builds"><a class="anchor" href="#development-and-production-builds" aria-label="Link to this section">#</a>Development and production builds</h2>
+<div class="table-wrap"><table><thead><tr><th></th><th><code>actors dev</code></th><th><code>actors deploy</code></th></tr></thead><tbody><tr><td>Entry point</td><td><code>.actors/entry.dev.ts</code></td><td><code>.actors/entry.ts</code></td></tr>
+<tr><td>Actor Explorer and <code>/__actors</code> routes</td><td>Included, localhost only</td><td>Not in the bundle</td></tr>
+<tr><td>Dev-only inspection RPCs</td><td>Enabled</td><td>Rejected</td></tr>
+<tr><td>Default instrumentation</td><td><code>all</code>, with arguments</td><td><code>errors</code>, no arguments</td></tr></tbody></table></div>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="cli.html">CLI</a></li>
+<li><a href="../concepts/how-actors-work.html#generated-files">How actors work: generated files</a></li>
+<li><a href="https://developers.cloudflare.com/workers/wrangler/configuration/" target="_blank" rel="noopener">Wrangler configuration</a> ↗</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/reference/configuration.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="cli.html"><span>Previous</span>CLI</a><a class="next" href="limits.html"><span>Next</span>Limits</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#project-layout">Project layout</a></li><li class="d2"><a href="#wranglerjsonc">wrangler.jsonc</a></li><li class="d2"><a href="#environment-variables">Environment variables</a></li><li class="d2"><a href="#development-and-production-builds">Development and production builds</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

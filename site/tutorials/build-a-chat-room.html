@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build a chat room · Actors (unofficial PoC)</title>
+<meta name="description" content="In this tutorial, you build a real-time chat room where:">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="build-a-chat-room.html" aria-current="page" class="active">Build a chat room</a></li><li><a href="build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Tutorials</p>
+    <article><h1>Build a chat room</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>In this tutorial, you build a real-time chat room where:</p>
+<ul>
+<li>Every room is one actor instance, keyed by room name.</li>
+<li>Clients connect over WebSockets, with their identity set by your Worker.</li>
+<li>Messages are saved, then broadcast. A message that fails to save is never broadcast.</li>
+<li>The online list comes from live connections, so it can&#39;t go stale.</li>
+</ul>
+<p>The finished code is in <a href="https://github.com/markdembo/actors-poc/tree/main/examples/chat" target="_blank" rel="noopener"><code>examples/chat</code></a>.</p>
+<h2 id="prerequisites"><a class="anchor" href="#prerequisites" aria-label="Link to this section">#</a>Prerequisites</h2>
+<p>Complete <a href="../get-started.html">Get started</a> first, or start from a project with the same <code>package.json</code> and <code>tsconfig.json</code>.</p>
+<h2 id="1-define-the-room"><a class="anchor" href="#1-define-the-room" aria-label="Link to this section">#</a>1. Define the room</h2>
+<p>Create <code>src/actors/room.ts</code>:</p>
+<figure class="code has-title"><figcaption><span>src/actors/room.ts</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">import</span> { actor, typed } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;actors-poc&quot;</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">interface</span> <span class="hljs-title class_">ChatMessage</span> {
+  <span class="hljs-attr">id</span>: <span class="hljs-built_in">number</span>;
+  <span class="hljs-attr">user</span>: <span class="hljs-built_in">string</span>;
+  <span class="hljs-attr">text</span>: <span class="hljs-built_in">string</span>;
+  <span class="hljs-attr">at</span>: <span class="hljs-built_in">number</span>;
+}
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> <span class="hljs-title class_">ChatRoom</span> = <span class="hljs-title function_">actor</span>({
+  <span class="hljs-attr">state</span>: <span class="hljs-function">(<span class="hljs-params"><span class="hljs-attr">room</span>: <span class="hljs-built_in">string</span></span>) =&gt;</span> ({ room, <span class="hljs-attr">nextId</span>: <span class="hljs-number">1</span>, <span class="hljs-attr">messages</span>: [] <span class="hljs-keyword">as</span> <span class="hljs-title class_">ChatMessage</span>[] }),
+
+  <span class="hljs-attr">connections</span>: {
+    <span class="hljs-attr">data</span>: typed&lt;{ <span class="hljs-attr">user</span>: <span class="hljs-built_in">string</span> }&gt;(),
+
+    <span class="hljs-title function_">onConnect</span>(<span class="hljs-params">ctx, conn</span>) {
+      <span class="hljs-keyword">if</span> (!<span class="hljs-regexp">/^[\w-]{1,32}$/</span>.<span class="hljs-title function_">test</span>(conn.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>)) <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Error</span>(<span class="hljs-string">&quot;Pick a name: letters, digits, - or _ (max 32)&quot;</span>);
+      <span class="hljs-keyword">const</span> online = [...ctx.<span class="hljs-title function_">connections</span>().<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">c</span>) =&gt;</span> c.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>), conn.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>];
+      conn.<span class="hljs-title function_">send</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;welcome&quot;</span>, <span class="hljs-attr">messages</span>: ctx.<span class="hljs-property">state</span>.<span class="hljs-property">messages</span>.<span class="hljs-title function_">slice</span>(-<span class="hljs-number">50</span>), online });
+      ctx.<span class="hljs-title function_">broadcast</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;joined&quot;</span>, <span class="hljs-attr">user</span>: conn.<span class="hljs-property">data</span>.<span class="hljs-property">user</span> }, { <span class="hljs-attr">except</span>: conn.<span class="hljs-property">id</span> });
+    },
+
+    <span class="hljs-title function_">onMessage</span>(<span class="hljs-params">ctx, conn, raw</span>) {
+      <span class="hljs-keyword">if</span> (<span class="hljs-keyword">typeof</span> raw !== <span class="hljs-string">&quot;string&quot;</span>) <span class="hljs-keyword">return</span>;
+      <span class="hljs-keyword">const</span> text = raw.<span class="hljs-title function_">trim</span>();
+      <span class="hljs-keyword">if</span> (!text || text.<span class="hljs-property">length</span> &gt; <span class="hljs-number">2000</span>) {
+        conn.<span class="hljs-title function_">send</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;error&quot;</span>, <span class="hljs-attr">error</span>: <span class="hljs-string">&quot;Messages must be 1-2000 characters&quot;</span> });
+        <span class="hljs-keyword">return</span>;
+      }
+      <span class="hljs-keyword">const</span> message = { <span class="hljs-attr">id</span>: ctx.<span class="hljs-property">state</span>.<span class="hljs-property">nextId</span>++, <span class="hljs-attr">user</span>: conn.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>, text, <span class="hljs-attr">at</span>: <span class="hljs-title class_">Date</span>.<span class="hljs-title function_">now</span>() };
+      ctx.<span class="hljs-property">state</span>.<span class="hljs-property">messages</span>.<span class="hljs-title function_">push</span>(message);
+      ctx.<span class="hljs-property">state</span>.<span class="hljs-property">messages</span> = ctx.<span class="hljs-property">state</span>.<span class="hljs-property">messages</span>.<span class="hljs-title function_">slice</span>(-<span class="hljs-number">500</span>);
+      ctx.<span class="hljs-title function_">broadcast</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;message&quot;</span>, message });
+    },
+
+    <span class="hljs-title function_">onClose</span>(<span class="hljs-params">ctx, conn</span>) {
+      ctx.<span class="hljs-title function_">broadcast</span>({ <span class="hljs-attr">type</span>: <span class="hljs-string">&quot;left&quot;</span>, <span class="hljs-attr">user</span>: conn.<span class="hljs-property">data</span>.<span class="hljs-property">user</span> });
+    },
+  },
+
+  <span class="hljs-attr">actions</span>: {
+    <span class="hljs-attr">history</span>: <span class="hljs-function">(<span class="hljs-params">{ state }, <span class="hljs-attr">limit</span>: <span class="hljs-built_in">number</span> = <span class="hljs-number">50</span></span>) =&gt;</span> state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">slice</span>(-limit),
+    <span class="hljs-attr">online</span>: <span class="hljs-function">(<span class="hljs-params">ctx</span>) =&gt;</span> ctx.<span class="hljs-title function_">connections</span>().<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">c</span>) =&gt;</span> c.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>),
+  },
+});</code></pre></figure>
+<p>In the code above, you have:</p>
+<ol>
+<li>Used a state factory, <code>(room) =&gt; ({ room, ... })</code>, so each instance knows its own name.</li>
+<li>Declared the connection data type with <code>typed&lt;{ user: string }&gt;()</code>. <code>conn.data.user</code> is now a <code>string</code> everywhere.</li>
+<li>Refused bad names in <code>onConnect</code> by throwing. The client gets HTTP 403 and no socket opens.</li>
+<li>Sent the newcomer recent history with <code>conn.send</code>, and told everyone else with <code>ctx.broadcast</code>, using <code>except</code> to skip the newcomer.</li>
+<li>Replied to bad input instead of throwing, so the client learns what went wrong.</li>
+<li>Bounded the history to 500 messages, so the state document never outgrows its limit.</li>
+</ol>
+<h2 id="2-connect-from-your-worker"><a class="anchor" href="#2-connect-from-your-worker" aria-label="Link to this section">#</a>2. Connect from your Worker</h2>
+<p>Create <code>src/index.ts</code>:</p>
+<figure class="code has-title"><figcaption><span>src/index.ts</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">ChatRoom</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;./actors/room&quot;</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">default</span> {
+  <span class="hljs-keyword">async</span> <span class="hljs-title function_">fetch</span>(<span class="hljs-attr">request</span>: <span class="hljs-title class_">Request</span>): <span class="hljs-title class_">Promise</span>&lt;<span class="hljs-title class_">Response</span>&gt; {
+    <span class="hljs-keyword">const</span> url = <span class="hljs-keyword">new</span> <span class="hljs-title function_">URL</span>(request.<span class="hljs-property">url</span>);
+    <span class="hljs-keyword">const</span> [, resource, room, op] = url.<span class="hljs-property">pathname</span>.<span class="hljs-title function_">split</span>(<span class="hljs-string">&quot;/&quot;</span>).<span class="hljs-title function_">map</span>(<span class="hljs-built_in">decodeURIComponent</span>);
+    <span class="hljs-keyword">if</span> (resource !== <span class="hljs-string">&quot;rooms&quot;</span> || !room) <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Response</span>(<span class="hljs-string">&quot;Not found&quot;</span>, { <span class="hljs-attr">status</span>: <span class="hljs-number">404</span> });
+
+    <span class="hljs-keyword">if</span> (op === <span class="hljs-string">&quot;ws&quot;</span>) {
+      <span class="hljs-keyword">const</span> user = url.<span class="hljs-property">searchParams</span>.<span class="hljs-title function_">get</span>(<span class="hljs-string">&quot;user&quot;</span>) ?? <span class="hljs-string">&quot;&quot;</span>; <span class="hljs-comment">// demo only: use your real auth here</span>
+      <span class="hljs-keyword">return</span> <span class="hljs-title class_">ChatRoom</span>.<span class="hljs-title function_">connect</span>(room, request, { <span class="hljs-attr">data</span>: { user } });
+    }
+    <span class="hljs-keyword">const</span> ref = <span class="hljs-title class_">ChatRoom</span>.<span class="hljs-title function_">get</span>(room);
+    <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>({ <span class="hljs-attr">messages</span>: <span class="hljs-keyword">await</span> ref.<span class="hljs-title function_">history</span>(), <span class="hljs-attr">online</span>: <span class="hljs-keyword">await</span> ref.<span class="hljs-title function_">online</span>() });
+  },
+};</code></pre></figure>
+<p><code>ChatRoom.connect()</code> returns <code>426</code> for requests that aren&#39;t WebSocket upgrades, <code>403</code> when <code>onConnect</code> refuses, and the upgrade response otherwise. Return it from your handler as-is.</p>
+<aside class="callout callout-caution" role="note"><p class="callout-title">Caution</p><p>Taking the user name from the query string keeps this tutorial short. In a real app, authenticate the request and pass the verified identity as <code>data</code>. Refer to <a href="../best-practices/websockets.html#authenticate-in-the-worker-then-connect">Authenticate in the Worker</a>.</p>
+</aside>
+<h2 id="3-try-it"><a class="anchor" href="#3-try-it" aria-label="Link to this section">#</a>3. Try it</h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">pnpm dev</code></pre></figure>
+<p>Connect two clients, for example with two browser tabs on the <a href="https://github.com/markdembo/actors-poc/blob/main/examples/chat/src/page.html" target="_blank" rel="noopener">example&#39;s page</a>, or from Node.js 22+:</p>
+<figure class="code has-title"><figcaption><span>client.mjs</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-javascript"><span class="hljs-keyword">const</span> ws = <span class="hljs-keyword">new</span> <span class="hljs-title class_">WebSocket</span>(<span class="hljs-string">&quot;ws://localhost:8787/rooms/lobby/ws?user=ada&quot;</span>);
+ws.<span class="hljs-property">onmessage</span> = <span class="hljs-function">(<span class="hljs-params">e</span>) =&gt;</span> <span class="hljs-variable language_">console</span>.<span class="hljs-title function_">log</span>(<span class="hljs-title class_">JSON</span>.<span class="hljs-title function_">parse</span>(e.<span class="hljs-property">data</span>));
+ws.<span class="hljs-property">onopen</span> = <span class="hljs-function">() =&gt;</span> ws.<span class="hljs-title function_">send</span>(<span class="hljs-string">&quot;hello&quot;</span>);</code></pre></figure>
+<p>Every connected client receives <code>{ type: &quot;message&quot;, ... }</code>. Read the room over HTTP:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">curl localhost:8787/rooms/lobby</code></pre></figure>
+<h2 id="4-inspect-it"><a class="anchor" href="#4-inspect-it" aria-label="Link to this section">#</a>4. Inspect it</h2>
+<p>Open <code>http://localhost:8787/__actors</code> and select <strong>ChatRoom → lobby</strong>. You can see:</p>
+<ul>
+<li><strong>Persisted state</strong>: the saved messages.</li>
+<li><strong>Activity</strong>: each <code>onConnect</code>, <code>onMessage</code> and <code>onClose</code>, with source <code>websocket</code>.</li>
+<li><strong>Connections</strong>: the open sockets and their data.</li>
+</ul>
+<p>Invoke <code>history</code> with <code>[5]</code> from the console to read the last five messages.</p>
+<h2 id="summary"><a class="anchor" href="#summary" aria-label="Link to this section">#</a>Summary</h2>
+<p>By finishing this tutorial, you have:</p>
+<ul>
+<li>Built a durable chat room with typed connection data.</li>
+<li>Seen that messages are saved before they are broadcast.</li>
+<li>Used live connections for presence instead of stored state.</li>
+</ul>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="../best-practices/websockets.html">WebSockets best practices</a></li>
+<li><a href="../api/connections.html">Connections API</a></li>
+<li><a href="../semantics.html#websockets">Semantics: WebSockets</a></li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/tutorials/build-a-chat-room.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="../concepts/how-actors-work.html"><span>Previous</span>How actors work</a><a class="next" href="build-an-ai-agent.html"><span>Next</span>Build a persistent AI agent</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#prerequisites">Prerequisites</a></li><li class="d2"><a href="#1-define-the-room">1. Define the room</a></li><li class="d2"><a href="#2-connect-from-your-worker">2. Connect from your Worker</a></li><li class="d2"><a href="#3-try-it">3. Try it</a></li><li class="d2"><a href="#4-inspect-it">4. Inspect it</a></li><li class="d2"><a href="#summary">Summary</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

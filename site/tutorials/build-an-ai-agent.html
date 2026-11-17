@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build a persistent AI agent · Actors (unofficial PoC)</title>
+<meta name="description" content="In this tutorial, you build a support agent with one instance per customer. The agent:">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="build-a-chat-room.html">Build a chat room</a></li><li><a href="build-an-ai-agent.html" aria-current="page" class="active">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Tutorials</p>
+    <article><h1>Build a persistent AI agent</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>In this tutorial, you build a support agent with one instance per customer. The agent:</p>
+<ul>
+<li>Keeps the conversation, long-term memory and tasks in its state.</li>
+<li>Runs model tool calls that change that state.</li>
+<li>Schedules reminders that arrive later.</li>
+<li>Never keeps a half-finished turn when the model call fails.</li>
+<li>Hides a stored API token from debugging tools.</li>
+</ul>
+<p>The model is simulated so you can run everything without API keys. The finished code is in <a href="https://github.com/markdembo/actors-poc/tree/main/examples/agent" target="_blank" rel="noopener"><code>examples/agent</code></a>.</p>
+<h2 id="prerequisites"><a class="anchor" href="#prerequisites" aria-label="Link to this section">#</a>Prerequisites</h2>
+<p>Complete <a href="../get-started.html">Get started</a> first.</p>
+<h2 id="1-add-a-model"><a class="anchor" href="#1-add-a-model" aria-label="Link to this section">#</a>1. Add a model</h2>
+<p>Copy <a href="https://github.com/markdembo/actors-poc/blob/main/examples/agent/src/model.ts" target="_blank" rel="noopener"><code>examples/agent/src/model.ts</code></a> into <code>src/model.ts</code>. It exports one function:</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-title function_">respond</span>(<span class="hljs-attr">input</span>: { <span class="hljs-attr">message</span>: <span class="hljs-built_in">string</span>; <span class="hljs-attr">name</span>: <span class="hljs-built_in">string</span> | <span class="hljs-literal">null</span>; <span class="hljs-attr">memory</span>: <span class="hljs-built_in">string</span>[]; <span class="hljs-attr">openTasks</span>: <span class="hljs-built_in">string</span>[] })
+  : <span class="hljs-title class_">Promise</span>&lt;{ <span class="hljs-attr">reply</span>: <span class="hljs-built_in">string</span>; <span class="hljs-attr">toolCalls</span>: <span class="hljs-title class_">ToolCall</span>[] }&gt;</code></pre></figure>
+<p>It recognizes phrases like <code>my name is Ada</code>, <code>remember that ...</code>, <code>task: ...</code> and <code>remind me in 5 seconds to ...</code>, and returns the matching tool calls. To use a real model, replace the body of <code>respond</code>. The actor code doesn&#39;t change.</p>
+<h2 id="2-define-the-agent"><a class="anchor" href="#2-define-the-agent" aria-label="Link to this section">#</a>2. Define the agent</h2>
+<p>Create <code>src/actors/support-agent.ts</code>:</p>
+<figure class="code has-title"><figcaption><span>src/actors/support-agent.ts</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">import</span> { actor } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;actors-poc&quot;</span>;
+<span class="hljs-keyword">import</span> { respond } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;../model&quot;</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">interface</span> <span class="hljs-title class_">Message</span> {
+  <span class="hljs-attr">role</span>: <span class="hljs-string">&quot;user&quot;</span> | <span class="hljs-string">&quot;assistant&quot;</span>;
+  <span class="hljs-attr">content</span>: <span class="hljs-built_in">string</span>;
+  <span class="hljs-attr">at</span>: <span class="hljs-built_in">number</span>;
+}
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> <span class="hljs-title class_">SupportAgent</span> = <span class="hljs-title function_">actor</span>({
+  <span class="hljs-attr">state</span>: <span class="hljs-function">(<span class="hljs-params"><span class="hljs-attr">customerId</span>: <span class="hljs-built_in">string</span></span>) =&gt;</span> ({
+    customerId,
+    <span class="hljs-attr">name</span>: <span class="hljs-literal">null</span> <span class="hljs-keyword">as</span> <span class="hljs-built_in">string</span> | <span class="hljs-literal">null</span>,
+    <span class="hljs-attr">messages</span>: [] <span class="hljs-keyword">as</span> <span class="hljs-title class_">Message</span>[],
+    <span class="hljs-attr">memory</span>: [] <span class="hljs-keyword">as</span> <span class="hljs-built_in">string</span>[],
+    <span class="hljs-attr">tasks</span>: [] <span class="hljs-keyword">as</span> { <span class="hljs-attr">id</span>: <span class="hljs-built_in">number</span>; <span class="hljs-attr">title</span>: <span class="hljs-built_in">string</span>; <span class="hljs-attr">done</span>: <span class="hljs-built_in">boolean</span> }[],
+    <span class="hljs-attr">nextTaskId</span>: <span class="hljs-number">1</span>,
+    <span class="hljs-attr">crmToken</span>: <span class="hljs-literal">null</span> <span class="hljs-keyword">as</span> <span class="hljs-built_in">string</span> | <span class="hljs-literal">null</span>,
+  }),
+
+  <span class="hljs-attr">redact</span>: { <span class="hljs-attr">state</span>: [<span class="hljs-string">&quot;crmToken&quot;</span>], <span class="hljs-attr">args</span>: [<span class="hljs-string">&quot;connectCrm&quot;</span>] },
+
+  <span class="hljs-attr">actions</span>: {
+    <span class="hljs-keyword">async</span> <span class="hljs-title function_">chat</span>(<span class="hljs-params">ctx, <span class="hljs-attr">message</span>: <span class="hljs-built_in">string</span></span>) {
+      <span class="hljs-keyword">const</span> { state } = ctx;
+      <span class="hljs-keyword">if</span> (<span class="hljs-keyword">typeof</span> message !== <span class="hljs-string">&quot;string&quot;</span> || !message.<span class="hljs-title function_">trim</span>()) <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Error</span>(<span class="hljs-string">&quot;message must be a non-empty string&quot;</span>);
+      state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">push</span>({ <span class="hljs-attr">role</span>: <span class="hljs-string">&quot;user&quot;</span>, <span class="hljs-attr">content</span>: message, <span class="hljs-attr">at</span>: <span class="hljs-title class_">Date</span>.<span class="hljs-title function_">now</span>() });
+
+      <span class="hljs-keyword">const</span> out = <span class="hljs-keyword">await</span> <span class="hljs-title function_">respond</span>({
+        message,
+        <span class="hljs-attr">name</span>: state.<span class="hljs-property">name</span>,
+        <span class="hljs-attr">memory</span>: state.<span class="hljs-property">memory</span>,
+        <span class="hljs-attr">openTasks</span>: state.<span class="hljs-property">tasks</span>.<span class="hljs-title function_">filter</span>(<span class="hljs-function">(<span class="hljs-params">t</span>) =&gt;</span> !t.<span class="hljs-property">done</span>).<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">t</span>) =&gt;</span> t.<span class="hljs-property">title</span>),
+      });
+
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> call <span class="hljs-keyword">of</span> out.<span class="hljs-property">toolCalls</span>) {
+        ctx.<span class="hljs-title function_">log</span>(<span class="hljs-string">&quot;tool call&quot;</span>, call);
+        <span class="hljs-keyword">if</span> (call.<span class="hljs-property">tool</span> === <span class="hljs-string">&quot;set_name&quot;</span>) state.<span class="hljs-property">name</span> = call.<span class="hljs-property">name</span>;
+        <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (call.<span class="hljs-property">tool</span> === <span class="hljs-string">&quot;remember&quot;</span>) state.<span class="hljs-property">memory</span>.<span class="hljs-title function_">push</span>(call.<span class="hljs-property">fact</span>);
+        <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (call.<span class="hljs-property">tool</span> === <span class="hljs-string">&quot;add_task&quot;</span>) state.<span class="hljs-property">tasks</span>.<span class="hljs-title function_">push</span>({ <span class="hljs-attr">id</span>: state.<span class="hljs-property">nextTaskId</span>++, <span class="hljs-attr">title</span>: call.<span class="hljs-property">title</span>, <span class="hljs-attr">done</span>: <span class="hljs-literal">false</span> });
+        <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (call.<span class="hljs-property">tool</span> === <span class="hljs-string">&quot;remind&quot;</span>) ctx.<span class="hljs-title function_">schedule</span>(call.<span class="hljs-property">inSeconds</span>, <span class="hljs-string">&quot;followUp&quot;</span>, call.<span class="hljs-property">note</span>);
+      }
+
+      state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">push</span>({ <span class="hljs-attr">role</span>: <span class="hljs-string">&quot;assistant&quot;</span>, <span class="hljs-attr">content</span>: out.<span class="hljs-property">reply</span>, <span class="hljs-attr">at</span>: <span class="hljs-title class_">Date</span>.<span class="hljs-title function_">now</span>() });
+      state.<span class="hljs-property">messages</span> = state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">slice</span>(-<span class="hljs-number">200</span>);
+      <span class="hljs-keyword">return</span> out.<span class="hljs-property">reply</span>;
+    },
+
+    <span class="hljs-title function_">followUp</span>(<span class="hljs-params">{ state }, <span class="hljs-attr">note</span>: <span class="hljs-built_in">string</span></span>) {
+      state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">push</span>({ <span class="hljs-attr">role</span>: <span class="hljs-string">&quot;assistant&quot;</span>, <span class="hljs-attr">content</span>: <span class="hljs-string">`Reminder: <span class="hljs-subst">${note}</span>`</span>, <span class="hljs-attr">at</span>: <span class="hljs-title class_">Date</span>.<span class="hljs-title function_">now</span>() });
+    },
+
+    <span class="hljs-title function_">connectCrm</span>(<span class="hljs-params">{ state }, <span class="hljs-attr">token</span>: <span class="hljs-built_in">string</span></span>) {
+      state.<span class="hljs-property">crmToken</span> = token;
+    },
+
+    <span class="hljs-title function_">history</span>(<span class="hljs-params">{ state }, <span class="hljs-attr">limit</span>: <span class="hljs-built_in">number</span> = <span class="hljs-number">20</span></span>) {
+      <span class="hljs-keyword">return</span> { <span class="hljs-attr">name</span>: state.<span class="hljs-property">name</span>, <span class="hljs-attr">memory</span>: state.<span class="hljs-property">memory</span>, <span class="hljs-attr">tasks</span>: state.<span class="hljs-property">tasks</span>, <span class="hljs-attr">messages</span>: state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">slice</span>(-limit) };
+    },
+  },
+});</code></pre></figure>
+<p>In the code above, you have:</p>
+<ol>
+<li><strong>Pushed the user&#39;s message before calling the model.</strong> If <code>respond</code> throws, that push is rolled back with everything else, so the transcript never shows a question without an answer.</li>
+<li><strong>Applied tool calls to the draft state.</strong> They commit together with the reply, or not at all.</li>
+<li><strong>Scheduled a reminder with <code>ctx.schedule</code>.</strong> It is part of the same transaction: a failed turn schedules nothing. The reminder runs <code>followUp</code> later, at least once.</li>
+<li><strong>Logged each tool call with <code>ctx.log</code>,</strong> so it appears next to the invocation in the Actor Explorer.</li>
+<li><strong>Redacted the CRM token</strong> from state views and from the recorded arguments of <code>connectCrm</code>.</li>
+</ol>
+<aside class="callout callout-note" role="note"><p class="callout-title">Note</p><p>Actions run one at a time. While a real model call is in flight, other calls to the same customer&#39;s agent wait. That&#39;s usually what you want for one conversation. For agents that run long, multi-step jobs, consider a dedicated agent runtime hosted as a <a href="../api/durable.html">raw Durable Object</a>.</p>
+</aside>
+<h2 id="3-expose-it-over-http"><a class="anchor" href="#3-expose-it-over-http" aria-label="Link to this section">#</a>3. Expose it over HTTP</h2>
+<p>Create <code>src/index.ts</code>:</p>
+<figure class="code has-title"><figcaption><span>src/index.ts</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">ActorError</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;actors-poc&quot;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">SupportAgent</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;./actors/support-agent&quot;</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">default</span> {
+  <span class="hljs-keyword">async</span> <span class="hljs-title function_">fetch</span>(<span class="hljs-attr">request</span>: <span class="hljs-title class_">Request</span>): <span class="hljs-title class_">Promise</span>&lt;<span class="hljs-title class_">Response</span>&gt; {
+    <span class="hljs-keyword">const</span> url = <span class="hljs-keyword">new</span> <span class="hljs-title function_">URL</span>(request.<span class="hljs-property">url</span>);
+    <span class="hljs-keyword">const</span> [, resource, customer] = url.<span class="hljs-property">pathname</span>.<span class="hljs-title function_">split</span>(<span class="hljs-string">&quot;/&quot;</span>).<span class="hljs-title function_">map</span>(<span class="hljs-built_in">decodeURIComponent</span>);
+    <span class="hljs-keyword">if</span> (resource !== <span class="hljs-string">&quot;agents&quot;</span> || !customer) <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Response</span>(<span class="hljs-string">&quot;Not found&quot;</span>, { <span class="hljs-attr">status</span>: <span class="hljs-number">404</span> });
+
+    <span class="hljs-keyword">const</span> agent = <span class="hljs-title class_">SupportAgent</span>.<span class="hljs-title function_">get</span>(customer, { <span class="hljs-attr">timeoutMs</span>: <span class="hljs-number">30_000</span> });
+    <span class="hljs-keyword">try</span> {
+      <span class="hljs-keyword">if</span> (request.<span class="hljs-property">method</span> === <span class="hljs-string">&quot;POST&quot;</span>) {
+        <span class="hljs-keyword">const</span> { message } = <span class="hljs-keyword">await</span> request.<span class="hljs-property">json</span>&lt;{ <span class="hljs-attr">message</span>: <span class="hljs-built_in">string</span> }&gt;();
+        <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>({ <span class="hljs-attr">reply</span>: <span class="hljs-keyword">await</span> agent.<span class="hljs-title function_">chat</span>(message) });
+      }
+      <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>(<span class="hljs-keyword">await</span> agent.<span class="hljs-title function_">history</span>());
+    } <span class="hljs-keyword">catch</span> (err) {
+      <span class="hljs-keyword">if</span> (err <span class="hljs-keyword">instanceof</span> <span class="hljs-title class_">ActorError</span> &amp;&amp; err.<span class="hljs-property">kind</span> === <span class="hljs-string">&quot;action&quot;</span>) {
+        <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>({ <span class="hljs-attr">error</span>: err.<span class="hljs-property">message</span> }, { <span class="hljs-attr">status</span>: <span class="hljs-number">422</span> });
+      }
+      <span class="hljs-keyword">throw</span> err;
+    }
+  },
+};</code></pre></figure>
+<h2 id="4-talk-to-it"><a class="anchor" href="#4-talk-to-it" aria-label="Link to this section">#</a>4. Talk to it</h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">pnpm dev</code></pre></figure>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">curl -X POST localhost:8787/agents/acme -d <span class="hljs-string">&#x27;{&quot;message&quot;:&quot;my name is Ada&quot;}&#x27;</span>
+curl -X POST localhost:8787/agents/acme -d <span class="hljs-string">&#x27;{&quot;message&quot;:&quot;remind me in 5 seconds to check the invoice&quot;}&#x27;</span>
+curl localhost:8787/agents/acme</code></pre></figure>
+<p>After five seconds, read the history again. The reminder has been added by the scheduled <code>followUp</code>.</p>
+<h2 id="5-debug-a-failure"><a class="anchor" href="#5-debug-a-failure" aria-label="Link to this section">#</a>5. Debug a failure</h2>
+<p>Send a malformed tool call, which makes the simulated model throw:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">curl -X POST localhost:8787/agents/acme -d <span class="hljs-string">&#x27;{&quot;message&quot;:&quot;tool {\&quot;tool\&quot;: \&quot;remember\&quot;&quot;}&#x27;</span></code></pre></figure>
+<p>You get HTTP 422. Then inspect the agent:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">pnpm <span class="hljs-built_in">exec</span> actors inspect SupportAgent acme</code></pre></figure>
+<p>The failed <code>chat</code> is listed with its input, a <code>SyntaxError</code>, a stack trace through the model code, and the label <strong>rolled back</strong>. The transcript has no trace of the failed turn.</p>
+<h2 id="summary"><a class="anchor" href="#summary" aria-label="Link to this section">#</a>Summary</h2>
+<p>By finishing this tutorial, you have:</p>
+<ul>
+<li>Kept an agent&#39;s conversation, memory and tasks in transactional state.</li>
+<li>Applied model tool calls atomically with the reply.</li>
+<li>Scheduled durable follow-ups.</li>
+<li>Diagnosed a failed turn from the invocation log.</li>
+</ul>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="../best-practices/rules-of-actors.html#make-side-effects-safe-to-repeat">Rules of actors: side effects</a></li>
+<li><a href="../api/action-context.html#schedule">Action context: <code>schedule</code></a></li>
+<li><a href="../api/durable.html"><code>durable()</code></a>: hosting an agent runtime as a raw Durable Object</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/tutorials/build-an-ai-agent.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="build-a-chat-room.html"><span>Previous</span>Build a chat room</a><a class="next" href="../best-practices/rules-of-actors.html"><span>Next</span>Rules of actors</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#prerequisites">Prerequisites</a></li><li class="d2"><a href="#1-add-a-model">1. Add a model</a></li><li class="d2"><a href="#2-define-the-agent">2. Define the agent</a></li><li class="d2"><a href="#3-expose-it-over-http">3. Expose it over HTTP</a></li><li class="d2"><a href="#4-talk-to-it">4. Talk to it</a></li><li class="d2"><a href="#5-debug-a-failure">5. Debug a failure</a></li><li class="d2"><a href="#summary">Summary</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

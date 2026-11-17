@@ -8,10 +8,13 @@
     "typecheck": "pnpm -r run typecheck && tsc -p tests/types",
     "test": "pnpm typecheck && pnpm test:e2e",
     "measure": "node comparison/measure.mjs",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "docs:build": "node scripts/build-docs.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261116.1",
+    "highlight.js": "^11",
+    "marked": "^16",
     "typescript": "^5.9.3",
     "wrangler": "^4.163.0"
   },

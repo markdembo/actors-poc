@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semantics: persistence, concurrency, failure · Actors (unofficial PoC)</title>
+<meta name="description" content="These are the guarantees the PoC makes. It promises nothing that Durable Objects do not provide underneath (PRD principle 3).">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="index.html">Overview</a></li><li><a href="get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="concepts/what-are-actors.html">What are actors?</a></li><li><a href="concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="api/index.html">API reference</a></li><li><a href="api/actor.html">actor()</a></li><li><a href="api/action-context.html">Action context</a></li><li><a href="api/connections.html">Connections</a></li><li><a href="api/errors.html">Errors</a></li><li><a href="api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="reference/cli.html">CLI</a></li><li><a href="reference/configuration.html">Configuration</a></li><li><a href="reference/limits.html">Limits</a></li><li><a href="semantics.html" aria-current="page" class="active">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Reference</p>
+    <article><h1>Semantics: persistence, concurrency, failure</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>These are the guarantees the PoC makes. It promises nothing that Durable Objects do not provide underneath (PRD principle 3).</p>
+<h2 id="identity"><a class="anchor" href="#identity" aria-label="Link to this section">#</a>Identity</h2>
+<ul>
+<li>An instance is addressed by <code>(actor type, key)</code>. It maps to the Durable Object named <code>&quot;&lt;Type&gt;:&lt;key&gt;&quot;</code> in the <code>ACTORS</code> namespace (<code>idFromName</code>), so the mapping is deterministic.</li>
+<li>Keys are scoped to <strong>one deployment&#39;s namespace</strong>. The same key in a different Worker, environment or account is a different instance.</li>
+<li>A key is an address, not proof of authorization. Authenticate the caller first, then derive the key from their identity. Do not trust a key that came from the client.</li>
+</ul>
+<h2 id="state-and-transactions"><a class="anchor" href="#state-and-transactions" aria-label="Link to this section">#</a>State and transactions</h2>
+<p>Each instance stores one JSON document in SQLite (table <code>_actor_state</code>).</p>
+<p>For every action:</p>
+<ol>
+<li>The committed document is parsed into a <strong>private draft</strong> (<code>ctx.state</code>).</li>
+<li>On an instance&#39;s first call, <code>onCreate</code> runs first, on the same draft.</li>
+<li>The action runs. It can mutate the draft or reassign <code>ctx.state</code>.</li>
+<li><strong>If the action throws</strong>, the draft is discarded. Nothing is written: no state, no schedules. The failure is recorded in the invocation log.</li>
+<li><strong>If it returns</strong>, the new state is checked: it must be plain JSON, <code>validate()</code> must pass, and it must be under 2 MB. The return value must be structured-cloneable. If any check fails, the action is rolled back as a <code>validation</code> error.</li>
+<li>The state, any <code>schedule</code>/<code>cancelSchedule</code> operations, and the log entry are committed in <strong>one SQLite transaction</strong> (<code>transactionSync</code>). If nothing changed, no state write happens.</li>
+<li>The caller gets the result. Durable Objects&#39; output gate holds the response until the write is durable.</li>
+</ol>
+<p>Things that are <strong>not</strong> inside the transaction:</p>
+<ul>
+<li>External side effects: <code>fetch</code>, emails, calls to other actors. If an action calls an API and then throws, the API call already happened. For effects that must happen exactly once, commit an intent in state, then perform it from a scheduled action that is idempotent.</li>
+<li>Writes through <code>ctx.sql</code> and <code>ctx.storage</code>. They apply immediately and are not rolled back when the action throws.</li>
+</ul>
+<h2 id="concurrency"><a class="anchor" href="#concurrency" aria-label="Link to this section">#</a>Concurrency</h2>
+<ul>
+<li>Actions on <strong>one instance run one at a time, in arrival order</strong>. The runtime keeps a queue per instance, so actions never interleave across <code>await</code>s. Lost updates are impossible (tested with 100 concurrent increments).</li>
+<li>The cost: a slow action (for example a long LLM call) blocks the instance&#39;s other actions. Keep long I/O short, or move it to a scheduled action or a Workflow.</li>
+<li><strong>Re-entrancy deadlocks.</strong> If an action awaits a call to <em>its own</em> instance, the call waits behind the running action forever, or until the platform times it out. Cycles deadlock the same way: A awaits B while B awaits A. Calls that don&#39;t come back to the caller are fine.</li>
+<li>Different instances run independently. There are no cross-actor transactions.</li>
+<li>Inspection (<code>actors inspect</code>, the Explorer&#39;s state view) does <strong>not</strong> queue. It reads committed state, so it works while an action is stuck.</li>
+</ul>
+<h2 id="calls-errors-retries"><a class="anchor" href="#calls-errors-retries" aria-label="Link to this section">#</a>Calls, errors, retries</h2>
+<ul>
+<li>Calls are <strong>never retried automatically</strong>. Retrying a non-idempotent action (such as <code>increment</code>) can apply it twice.</li>
+<li>Every failure surfaces as an <code>ActorError</code> with a <code>kind</code>:</li>
+</ul>
+<div class="table-wrap"><table><thead><tr><th>kind</th><th>Meaning</th><th>Did the action&#39;s state change commit?</th></tr></thead><tbody><tr><td><code>action</code></td><td>The action threw (<code>code</code> is preserved if the error had one)</td><td>No</td></tr>
+<tr><td><code>validation</code></td><td>The state or return value was rejected</td><td>No</td></tr>
+<tr><td><code>config</code></td><td>Unknown actor or action, missing binding, bad key</td><td>No (the action never ran)</td></tr>
+<tr><td><code>transport</code></td><td>The call failed in transit</td><td><strong>Unknown.</strong> It may have run. <code>retryable</code> reflects the platform&#39;s hint.</td></tr>
+<tr><td><code>timeout</code></td><td><code>timeoutMs</code> elapsed on the caller side</td><td><strong>Unknown.</strong> It usually still completes.</td></tr></tbody></table></div>
+<h2 id="scheduling"><a class="anchor" href="#scheduling" aria-label="Link to this section">#</a>Scheduling</h2>
+<p><code>ctx.schedule(seconds | Date, action, ...args)</code> stores a row and arms the Durable Object alarm. Scheduling is transactional: it is discarded if the action throws. Scheduled runs go through the same queued, transactional path, recorded with source <code>schedule</code>. Delivery is at least once: a failed run is attempted up to 3 times in total (retries after 2 s and 4 s), then dropped. The failure stays visible in the log. Scheduled actions should be idempotent.</p>
+<h2 id="websockets"><a class="anchor" href="#websockets" aria-label="Link to this section">#</a>WebSockets</h2>
+<ul>
+<li><strong>Hooks are actions.</strong> <code>onConnect</code>, <code>onMessage</code> and <code>onClose</code> are queued with the instance&#39;s other actions and follow the same transaction rules. A hook that throws changes nothing.</li>
+<li><strong>Sends wait for the save.</strong> <code>conn.send</code>, <code>conn.close</code> and <code>ctx.broadcast</code> only queue messages. They go out after the transaction commits, in the order they were queued. If the invocation fails, they are discarded, so a client never sees a message about a change that didn&#39;t happen.</li>
+<li><strong>Delivery is at most once.</strong> Messages go to sockets that are open at send time. A client that is disconnected (or reconnecting) misses them. Clients that need everything should keep a cursor (for example, the last message id) and fetch what they missed after reconnecting, as the chat example&#39;s <code>welcome</code> message does with recent history.</li>
+<li><strong><code>onConnect</code> runs before the socket is accepted.</strong> The new connection is not in <code>ctx.connections()</code> during its own <code>onConnect</code>. Messages it sends to that connection are delivered right after acceptance. If <code>onConnect</code> throws, the client gets HTTP 403 (or 500 for validation errors) and no socket is opened.</li>
+<li><strong><code>onMessage</code> failures don&#39;t close the socket.</strong> If you want clients to learn about errors, catch them in the hook and <code>conn.send</code> a reply. A reply sent from a hook that then throws is discarded with everything else.</li>
+<li><strong><code>onClose</code> runs once per connection</strong> (for a close or an error). The closing connection is already absent from <code>ctx.connections()</code>.</li>
+<li><strong>Connection data</strong> comes only from the Worker&#39;s <code>connect(key, request, { data })</code>. The headers that carry it are overwritten, so a client can&#39;t forge them. It must be JSON and at most 8 KB, because it is stored on the socket (the Hibernation API caps a socket&#39;s stored data at 16 KB).</li>
+<li><strong>Hibernation.</strong> Sockets are accepted through the Hibernation API: an idle instance can be evicted from memory while its sockets stay open, and an incoming message wakes it. Connection state lives on the sockets and in SQLite, not in memory, so nothing is lost on wake. Not tested here: forcing hibernation locally isn&#39;t possible.</li>
+<li><strong>Throughput.</strong> Every incoming message is one queued, transactional invocation, and a broadcast is one send per open socket. One instance tops out around Cloudflare&#39;s soft limit of 1,000 requests/s and its CPU budget. Very large rooms need the patterns in findings §3.8.</li>
+</ul>
+<h2 id="restarts-eviction-redeploys"><a class="anchor" href="#restarts-eviction-redeploys" aria-label="Link to this section">#</a>Restarts, eviction, redeploys</h2>
+<p>All state lives in SQLite. In-memory state is only a cache of the committed document. After an eviction, crash or redeploy, the next call reloads from storage. Tests cover state and invocation history surviving a full runtime restart. <code>lifecycle.instanceStartedAt</code> in <code>inspect</code> changes when the instance was recreated. The runtime does not expose other eviction or placement events, and the PoC does not pretend it does.</p>
+<h2 id="schema-changes"><a class="anchor" href="#schema-changes" aria-label="Link to this section">#</a>Schema changes</h2>
+<p>The state document has no schema version. If you change the shape of state, old instances keep their old shape until an action rewrites it. Handle this with defaults in your actions, or a <code>validate</code> that normalizes. Versioned migrations are future work (PRD §15).</p>
+<h2 id="limits"><a class="anchor" href="#limits" aria-label="Link to this section">#</a>Limits</h2>
+<ul>
+<li>State document: 2 MB. This is a conservative limit chosen by this proof of concept: Durable Objects SQLite allows values up to 8 MB, but every change rewrites the whole document. Put large or growing data in <code>ctx.sql</code> tables.</li>
+<li>Arguments and return values: structured-cloneable (Durable Object RPC).</li>
+<li>Invocation log: the last 100 entries per instance. Arguments are recorded only in dev, never for actions listed in <code>redact.args</code>.</li>
+<li>Instrumentation defaults to <code>all</code> in dev and <code>errors</code> in production. Override it with the <code>ACTORS_INSTRUMENTATION</code> var (<code>all</code> | <code>errors</code> | <code>off</code>).</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/semantics.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="reference/limits.html"><span>Previous</span>Limits</a><a class="next" href="findings.html"><span>Next</span>Findings</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#identity">Identity</a></li><li class="d2"><a href="#state-and-transactions">State and transactions</a></li><li class="d2"><a href="#concurrency">Concurrency</a></li><li class="d2"><a href="#calls-errors-retries">Calls, errors, retries</a></li><li class="d2"><a href="#scheduling">Scheduling</a></li><li class="d2"><a href="#websockets">WebSockets</a></li><li class="d2"><a href="#restarts-eviction-redeploys">Restarts, eviction, redeploys</a></li><li class="d2"><a href="#schema-changes">Schema changes</a></li><li class="d2"><a href="#limits">Limits</a></li></ul></aside>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

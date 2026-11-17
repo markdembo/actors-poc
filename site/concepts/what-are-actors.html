@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What are actors? · Actors (unofficial PoC)</title>
+<meta name="description" content="An actor is a small, stateful service with one instance per key. Each instance owns its own state, handles one action at a time, and lives until you delete its data. Under the hood, every instance is a Durable Object ↗.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="what-are-actors.html" aria-current="page" class="active">What are actors?</a></li><li><a href="how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Concepts</p>
+    <article><h1>What are actors?</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>An actor is a small, stateful service with one instance per key. Each instance owns its own state, handles one action at a time, and lives until you delete its data. Under the hood, every instance is a <a href="https://developers.cloudflare.com/durable-objects/" target="_blank" rel="noopener">Durable Object</a> ↗.</p>
+<h2 id="actors-workers-and-durable-objects"><a class="anchor" href="#actors-workers-and-durable-objects" aria-label="Link to this section">#</a>Actors, Workers and Durable Objects</h2>
+<div class="table-wrap"><table><thead><tr><th></th><th>Worker</th><th>Durable Object</th><th>Actor</th></tr></thead><tbody><tr><td>State between requests</td><td>None</td><td>Yes, in its storage</td><td>Yes, a JSON document per instance</td></tr>
+<tr><td>Instances</td><td>Many, anywhere</td><td>One per ID</td><td>One per (actor type, key)</td></tr>
+<tr><td>Concurrency</td><td>Fully parallel</td><td>One thread; requests can interleave at <code>await</code></td><td>One action at a time, in order</td></tr>
+<tr><td>What you write</td><td>A <code>fetch</code> handler</td><td>A class, binding, migration, ID and stub</td><td><code>actor({ state, actions })</code></td></tr>
+<tr><td>Failed request</td><td>Nothing to undo</td><td>Your code decides</td><td>State changes are rolled back</td></tr></tbody></table></div>
+<p>Use a Worker for stateless work. Use an actor when requests must agree on shared state. Use a raw Durable Object when you need something actors don&#39;t offer, such as a custom storage schema, streaming responses or another framework&#39;s base class. Refer to <a href="../api/durable.html"><code>durable()</code></a>.</p>
+<h2 id="the-four-ideas"><a class="anchor" href="#the-four-ideas" aria-label="Link to this section">#</a>The four ideas</h2>
+<p><strong>Actor.</strong> A type of service, such as <code>Cart</code>, <code>ChatRoom</code> or <code>SupportAgent</code>, defined once with <code>actor({...})</code> and exported from any file under <code>src/</code>.</p>
+<p><strong>Key.</strong> Which instance you mean: <code>Cart.get(&quot;alice&quot;)</code>. The same key always reaches the same instance within one deployment. Different deployments or environments have separate instances.</p>
+<p><strong>State.</strong> A JSON document per instance. Every action gets a private draft. The draft is saved when the action returns and thrown away when it throws.</p>
+<p><strong>Action.</strong> An async function <code>(ctx, ...args)</code>. Callers see it as <code>(...args) =&gt; Promise&lt;Result&gt;</code> with full types.</p>
+<h2 id="when-to-use-actors"><a class="anchor" href="#when-to-use-actors" aria-label="Link to this section">#</a>When to use actors</h2>
+<p>Actors fit when your data has a natural owner:</p>
+<ul>
+<li><strong>A customer, tenant or workspace</strong>: settings, quotas, usage.</li>
+<li><strong>A conversation or agent</strong>: messages, memory, tool state.</li>
+<li><strong>A shared space</strong>: a chat room, document or game lobby.</li>
+<li><strong>A coordinator</strong>: a rate limiter, booking slot or job tracker for one resource.</li>
+</ul>
+<p>Actors fit less well for:</p>
+<ul>
+<li><strong>Queries across many instances.</strong> There is no global query over actor state. Keep an index in D1 or another store if you need one.</li>
+<li><strong>One very hot key.</strong> One instance handles roughly a thousand simple requests per second. Refer to <a href="../best-practices/rules-of-actors.html#avoid-hot-actors">Avoid hot actors</a>.</li>
+<li><strong>Long-running work inside one call.</strong> Actions run one at a time, so a slow action delays everything else on that instance.</li>
+</ul>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="how-actors-work.html">How actors work</a>: the request path, storage layout and lifecycle.</li>
+<li><a href="../best-practices/rules-of-actors.html">Rules of actors</a>: design guidance.</li>
+<li><a href="../semantics.html">Semantics</a>: the exact guarantees.</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/concepts/what-are-actors.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="../get-started.html"><span>Previous</span>Get started</a><a class="next" href="how-actors-work.html"><span>Next</span>How actors work</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#actors-workers-and-durable-objects">Actors, Workers and Durable Objects</a></li><li class="d2"><a href="#the-four-ideas">The four ideas</a></li><li class="d2"><a href="#when-to-use-actors">When to use actors</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

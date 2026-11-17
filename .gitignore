@@ -3,3 +3,4 @@ node_modules
 .actors
 .dev.vars
 .DS_Store
+.claude/

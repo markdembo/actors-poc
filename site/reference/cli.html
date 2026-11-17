@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI · Actors (unofficial PoC)</title>
+<meta name="description" content="The actors CLI ships with the package. Run it with pnpm exec actors, or through the dev and deploy scripts from Get started. It writes standard Wrangler configuration and delegates to Wrangler; it never deploys anything itself.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="cli.html" aria-current="page" class="active">CLI</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Reference</p>
+    <article><h1>CLI</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>The <code>actors</code> CLI ships with the package. Run it with <code>pnpm exec actors</code>, or through the <code>dev</code> and <code>deploy</code> scripts from <a href="../get-started.html">Get started</a>. It writes standard Wrangler configuration and delegates to Wrangler; it never deploys anything itself.</p>
+<p>Every command accepts <code>--cwd &lt;dir&gt;</code> to run against another project folder.</p>
+<h2 id="generate"><a class="anchor" href="#generate" aria-label="Link to this section">#</a><code>generate</code></h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors generate</code></pre></figure>
+<p>Finds everything under <code>src/</code> that the framework manages:</p>
+<ul>
+<li>actors, written as <code>export const X = actor(</code></li>
+<li>raw Durable Object classes, written as <code>export class X extends DurableObject</code></li>
+</ul>
+<p>Then it writes:</p>
+<ul>
+<li><code>.actors/entry.ts</code>: the production entry point.</li>
+<li><code>.actors/entry.dev.ts</code>: the development entry point, with the Actor Explorer.</li>
+<li><code>.actors/manifest.json</code>: what was discovered.</li>
+<li><code>wrangler.jsonc</code>: creates the file, or edits it in place, keeping your settings and comments. It sets <code>main</code>, adds the <code>ACTORS</code> binding and the <code>actors-v1</code> migration, and adds one binding and migration per Durable Object class.</li>
+</ul>
+<p>Running it twice changes nothing. It fails with an explanation when:</p>
+<ul>
+<li>two actors or classes share a name</li>
+<li>a name is reserved</li>
+<li>a binding name clashes</li>
+<li><code>main</code> points somewhere other than <code>src/index.ts</code></li>
+<li>the project uses <code>wrangler.toml</code></li>
+</ul>
+<h2 id="dev"><a class="anchor" href="#dev" aria-label="Link to this section">#</a><code>dev</code></h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors dev [wrangler dev options]</code></pre></figure>
+<p>Runs <code>generate</code>, then <code>wrangler dev .actors/entry.dev.ts</code> with any options you pass, such as <code>--port 8788</code> or <code>--persist-to ./data</code>. It re-runs discovery when files under <code>src/</code> change, so new actors are picked up without a restart.</p>
+<p>The Actor Explorer is served at <code>/__actors</code>.</p>
+<h2 id="deploy"><a class="anchor" href="#deploy" aria-label="Link to this section">#</a><code>deploy</code></h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors deploy [wrangler deploy options]</code></pre></figure>
+<p>Runs <code>generate</code>, checks that the production entry contains no development tooling, then runs <code>wrangler deploy</code> with any options you pass, such as <code>--dry-run --outdir dist</code>.</p>
+<h2 id="inspect"><a class="anchor" href="#inspect" aria-label="Link to this section">#</a><code>inspect</code></h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors inspect &lt;Type&gt; &lt;key&gt; [--port 8787] [--json]</code></pre></figure>
+<p>Prints one instance:</p>
+<ul>
+<li>its state, with redacted keys hidden</li>
+<li>its last 15 invocations, with errors, stack traces and log lines</li>
+<li>pending schedules</li>
+<li>storage size</li>
+<li>runtime info: what&#39;s running, how many calls are queued, the next alarm</li>
+<li>open WebSocket connections</li>
+</ul>
+<p><code>--json</code> prints the full record (the last 50 invocations) for scripts and coding agents.</p>
+<p>Requires a running <code>actors dev</code>. Inspecting a key that doesn&#39;t exist reports &quot;not created&quot; and doesn&#39;t create it.</p>
+<h2 id="list"><a class="anchor" href="#list" aria-label="Link to this section">#</a><code>list</code></h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors list [--port 8787] [--json]</code></pre></figure>
+<p>Lists actor types with their actions and parameters, and every instance in local storage with its recent call and error counts. Requires a running <code>actors dev</code>.</p>
+<h2 id="actor-explorer"><a class="anchor" href="#actor-explorer" aria-label="Link to this section">#</a>Actor Explorer</h2>
+<p>A web UI served by <code>actors dev</code> at <code>http://localhost:8787/__actors</code>. It is not included in production builds, and it only answers requests addressed to <code>localhost</code>.</p>
+<ul>
+<li><strong>Actor types and instances.</strong> Every instance in local storage, read through Wrangler&#39;s Local Explorer API. Instances with recent failures are flagged.</li>
+<li><strong>Instance view.</strong> Saved state with the last change highlighted, an action console that takes JSON arguments, the activity timeline with stack traces and logs, storage size, runtime info, open connections, and pending schedules. You can delete an instance&#39;s storage from here.</li>
+<li><strong>Durable Objects.</strong> Instances of your raw Durable Object classes, with a read-only, paged view of their SQLite tables. Opening one starts it if it wasn&#39;t running.</li>
+</ul>
+<p>The Explorer reads storage through Wrangler&#39;s Local Explorer API (<code>/cdn-cgi/local/explorer/api</code>). It requires Wrangler 4.163 or later, and it doesn&#39;t work if <code>X_LOCAL_EXPLORER</code> is set to <code>false</code>.</p>
+<aside class="callout callout-caution" role="note"><p class="callout-title">Caution</p><p><code>redact</code> hides values in the Actor Explorer and <code>actors inspect</code> only. Wrangler&#39;s Local Explorer API exposes raw local storage to anything that can reach your dev server.</p>
+</aside>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/reference/cli.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="../api/durable.html"><span>Previous</span>durable()</a><a class="next" href="configuration.html"><span>Next</span>Configuration</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#generate">generate</a></li><li class="d2"><a href="#dev">dev</a></li><li class="d2"><a href="#deploy">deploy</a></li><li class="d2"><a href="#inspect">inspect</a></li><li class="d2"><a href="#list">list</a></li><li class="d2"><a href="#actor-explorer">Actor Explorer</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

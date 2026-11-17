@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>actor() · Actors (unofficial PoC)</title>
+<meta name="description" content="actor(config: ActorConfig&lt;S, A, C&gt;): Actor&lt;S, A, C&gt;">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="index.html">API reference</a></li><li><a href="actor.html" aria-current="page" class="active">actor()</a></li><li><a href="action-context.html">Action context</a></li><li><a href="connections.html">Connections</a></li><li><a href="errors.html">Errors</a></li><li><a href="durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">API</p>
+    <article><h1>actor()</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<h2 id="actor-1"><a class="anchor" href="#actor-1" aria-label="Link to this section">#</a><code>actor</code></h2>
+<p><code>actor(config: ActorConfig&lt;S, A, C&gt;)</code>: <code>Actor&lt;S, A, C&gt;</code></p>
+<p>Defines an actor type. Export the result from any file under <code>src/</code> as <code>export const Name = actor({...})</code>. The export name becomes the actor&#39;s name, and the CLI discovers it by this exact form.</p>
+<h4 id="parameters"><a class="anchor" href="#parameters" aria-label="Link to this section">#</a>Parameters</h4>
+<ul>
+<li><code>config.state</code> <code>S | (key: string) =&gt; S</code><ul>
+<li>The initial state of a new instance, or a function that builds it from the instance&#39;s key. Must be plain JSON.</li>
+</ul>
+</li>
+<li><code>config.actions</code> <code>Record&lt;string, (ctx: ActionContext&lt;S, C&gt;, ...args) =&gt; unknown&gt;</code><ul>
+<li>The callable methods. Names starting with <code>__</code> and the names <code>then</code>, <code>catch</code>, <code>finally</code>, <code>constructor</code>, <code>toJSON</code>, <code>valueOf</code> and <code>toString</code> are reserved.</li>
+</ul>
+</li>
+<li><code>config.onCreate</code> <code>(ctx) =&gt; void | Promise&lt;void&gt;</code> Optional<ul>
+<li>Runs once, before the first action or connection of a new instance, in the same transaction.</li>
+</ul>
+</li>
+<li><code>config.validate</code> <code>(state: S) =&gt; void</code> Optional<ul>
+<li>Runs before every commit. Throw to reject the commit as a <code>validation</code> error. Works well with schema libraries: <code>validate: (s) =&gt; void Schema.parse(s)</code>.</li>
+</ul>
+</li>
+<li><code>config.redact</code> <code>{ state?: (keyof S)[]; args?: (keyof A)[] }</code> Optional<ul>
+<li>Top-level state keys shown as <code>&quot;[redacted]&quot;</code> in the Actor Explorer and <code>actors inspect</code>, and actions whose arguments are never recorded in the invocation log.</li>
+</ul>
+</li>
+<li><code>config.connections</code> <code>ConnectionsConfig&lt;S, C&gt;</code> Optional<ul>
+<li>WebSocket hooks. Refer to <a href="connections.html">Connections</a>.</li>
+</ul>
+</li>
+<li><code>config.name</code> <code>string</code> Optional<ul>
+<li>An explicit name. Defaults to the export name.</li>
+</ul>
+</li>
+</ul>
+<h4 id="returns"><a class="anchor" href="#returns" aria-label="Link to this section">#</a>Returns</h4>
+<p>An <code>Actor</code> with <code>get()</code> and <code>connect()</code>.</p>
+<h4 id="example"><a class="anchor" href="#example" aria-label="Link to this section">#</a>Example</h4>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">import</span> { actor } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;actors-poc&quot;</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> <span class="hljs-title class_">Counter</span> = <span class="hljs-title function_">actor</span>({
+  <span class="hljs-attr">state</span>: { <span class="hljs-attr">count</span>: <span class="hljs-number">0</span> },
+  <span class="hljs-attr">actions</span>: {
+    <span class="hljs-attr">increment</span>: <span class="hljs-function">(<span class="hljs-params">{ state }, <span class="hljs-attr">by</span>: <span class="hljs-built_in">number</span> = <span class="hljs-number">1</span></span>) =&gt;</span> (state.<span class="hljs-property">count</span> += by),
+    <span class="hljs-attr">get</span>: <span class="hljs-function">(<span class="hljs-params">{ state }</span>) =&gt;</span> state.<span class="hljs-property">count</span>,
+  },
+});</code></pre></figure>
+<h2 id="get"><a class="anchor" href="#get" aria-label="Link to this section">#</a><code>get</code></h2>
+<p><code>Actor.get(key: string, options?: GetOptions)</code>: <code>ActorRef&lt;A&gt;</code></p>
+<p>Returns a typed reference to the instance with this key. Creating a reference is free: nothing is sent until you call an action. The instance itself is created by its first action.</p>
+<h4 id="parameters-1"><a class="anchor" href="#parameters-1" aria-label="Link to this section">#</a>Parameters</h4>
+<ul>
+<li><code>key</code> <code>string</code><ul>
+<li>A non-empty string of at most 512 characters. The same key always reaches the same instance within one deployment.</li>
+</ul>
+</li>
+<li><code>options.timeoutMs</code> <code>number</code> Optional<ul>
+<li>Reject with an <code>ActorError</code> of kind <code>timeout</code> if no result arrives in time. The action may still complete.</li>
+</ul>
+</li>
+</ul>
+<h4 id="returns-1"><a class="anchor" href="#returns-1" aria-label="Link to this section">#</a>Returns</h4>
+<p>An object with one async method per action. Each takes the action&#39;s arguments without <code>ctx</code>, and resolves to its return value:</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">const</span> <span class="hljs-attr">total</span>: <span class="hljs-built_in">number</span> = <span class="hljs-keyword">await</span> <span class="hljs-title class_">Counter</span>.<span class="hljs-title function_">get</span>(<span class="hljs-string">&quot;customer-123&quot;</span>).<span class="hljs-title function_">increment</span>(<span class="hljs-number">5</span>);</code></pre></figure>
+<p>Calls never retry automatically. Failures reject with an <a href="errors.html"><code>ActorError</code></a>.</p>
+<h2 id="connect"><a class="anchor" href="#connect" aria-label="Link to this section">#</a><code>connect</code></h2>
+<p><code>Actor.connect(key: string, request: Request, options?: ConnectOptions&lt;C&gt;)</code>: <code>Promise&lt;Response&gt;</code></p>
+<p>Hands a WebSocket upgrade request to the instance with this key. Return the result from your <code>fetch</code> handler.</p>
+<h4 id="parameters-2"><a class="anchor" href="#parameters-2" aria-label="Link to this section">#</a>Parameters</h4>
+<ul>
+<li><code>key</code> <code>string</code><ul>
+<li>The instance to connect to.</li>
+</ul>
+</li>
+<li><code>request</code> <code>Request</code><ul>
+<li>The incoming upgrade request.</li>
+</ul>
+</li>
+<li><code>options.data</code> <code>C</code> Optional<ul>
+<li>Per-connection data, typically the authenticated user. Plain JSON, at most 8 KB. It must match <code>connections.data</code>. It is available as <code>conn.data</code> in every hook.</li>
+</ul>
+</li>
+</ul>
+<h4 id="returns-2"><a class="anchor" href="#returns-2" aria-label="Link to this section">#</a>Returns</h4>
+<ul>
+<li><code>101</code> with the WebSocket, when the connection is accepted.</li>
+<li><code>426</code> when the request is not a WebSocket upgrade.</li>
+<li><code>403</code> with <code>{ error, code }</code> when <code>onConnect</code> throws.</li>
+<li><code>500</code> with <code>{ error, code }</code> when <code>onConnect</code> fails validation.</li>
+</ul>
+<p>Works on actors without <code>connections</code> hooks too. Those sockets only receive broadcasts.</p>
+<h4 id="example-1"><a class="anchor" href="#example-1" aria-label="Link to this section">#</a>Example</h4>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">export</span> <span class="hljs-keyword">default</span> {
+  <span class="hljs-keyword">async</span> <span class="hljs-title function_">fetch</span>(<span class="hljs-params"><span class="hljs-attr">request</span>: <span class="hljs-title class_">Request</span></span>) {
+    <span class="hljs-keyword">const</span> session = <span class="hljs-keyword">await</span> <span class="hljs-title function_">requireSession</span>(request); <span class="hljs-comment">// your auth</span>
+    <span class="hljs-keyword">return</span> <span class="hljs-title class_">ChatRoom</span>.<span class="hljs-title function_">connect</span>(<span class="hljs-string">&quot;lobby&quot;</span>, request, { <span class="hljs-attr">data</span>: { <span class="hljs-attr">user</span>: session.<span class="hljs-property">userId</span> } });
+  },
+};</code></pre></figure>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="action-context.html">Action context</a></li>
+<li><a href="../semantics.html">Semantics</a></li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/api/actor.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="index.html"><span>Previous</span>API reference</a><a class="next" href="action-context.html"><span>Next</span>Action context</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#actor-1">actor</a></li><li class="d2"><a href="#get">get</a></li><li class="d2"><a href="#connect">connect</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

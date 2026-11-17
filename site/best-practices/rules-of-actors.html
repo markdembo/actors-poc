@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rules of actors · Actors (unofficial PoC)</title>
+<meta name="description" content="Actors remove a lot of Durable Objects plumbing, but not the distributed-systems facts underneath it. This is a guide to designing actors that stay fast, consistent and debuggable. Each rule explains why, then shows a recommended (✅) and a discouraged (🔴) version.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="rules-of-actors.html" aria-current="page" class="active">Rules of actors</a></li><li><a href="websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Best practices</p>
+    <article><h1>Rules of actors</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>Actors remove a lot of Durable Objects plumbing, but not the distributed-systems facts underneath it. This is a guide to designing actors that stay fast, consistent and debuggable. Each rule explains why, then shows a recommended (✅) and a discouraged (🔴) version.</p>
+<h2 id="design"><a class="anchor" href="#design" aria-label="Link to this section">#</a>Design</h2>
+<h3 id="model-one-actor-per-entity-that-owns-its-data"><a class="anchor" href="#model-one-actor-per-entity-that-owns-its-data" aria-label="Link to this section">#</a>Model one actor per entity that owns its data</h3>
+<p>Pick the thing whose state must stay consistent, such as a customer, cart, room or agent, and make it the key. Every instance runs independently, so many small actors scale across machines automatically. One big actor runs on one thread.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ One instance per cart: carts never contend with each other.</span>
+<span class="hljs-keyword">const</span> cart = <span class="hljs-title class_">Cart</span>.<span class="hljs-title function_">get</span>(userId);
+
+<span class="hljs-comment">// 🔴 One instance for every cart: a single thread for your whole store.</span>
+<span class="hljs-keyword">const</span> carts = <span class="hljs-title class_">AllCarts</span>.<span class="hljs-title function_">get</span>(<span class="hljs-string">&quot;global&quot;</span>);</code></pre></figure>
+<h3 id="derive-keys-from-authenticated-identity"><a class="anchor" href="#derive-keys-from-authenticated-identity" aria-label="Link to this section">#</a>Derive keys from authenticated identity</h3>
+<p>A key is an address. Anyone who can make your Worker call <code>Cart.get(key)</code> with a key of their choice can read or change that instance. Authenticate first, then compute the key on the server.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ The key comes from a verified session.</span>
+<span class="hljs-keyword">const</span> session = <span class="hljs-keyword">await</span> <span class="hljs-title function_">requireSession</span>(request); <span class="hljs-comment">// your auth</span>
+<span class="hljs-keyword">const</span> cart = <span class="hljs-title class_">Cart</span>.<span class="hljs-title function_">get</span>(session.<span class="hljs-property">userId</span>);
+
+<span class="hljs-comment">// 🔴 The key comes straight from the client.</span>
+<span class="hljs-keyword">const</span> cart = <span class="hljs-title class_">Cart</span>.<span class="hljs-title function_">get</span>(<span class="hljs-keyword">new</span> <span class="hljs-title function_">URL</span>(request.<span class="hljs-property">url</span>).<span class="hljs-property">searchParams</span>.<span class="hljs-title function_">get</span>(<span class="hljs-string">&quot;cart&quot;</span>)!);</code></pre></figure>
+<h3 id="make-keys-stable-and-structured"><a class="anchor" href="#make-keys-stable-and-structured" aria-label="Link to this section">#</a>Make keys stable and structured</h3>
+<p>The key identifies stored data forever. Changing the format later strands old instances. Prefix keys that come from different sources so they can&#39;t collide, and stay under 512 characters.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ Stable, namespaced, collision-free.</span>
+<span class="hljs-title class_">Workspace</span>.<span class="hljs-title function_">get</span>(<span class="hljs-string">`org:<span class="hljs-subst">${orgId}</span>:ws:<span class="hljs-subst">${workspaceId}</span>`</span>);
+
+<span class="hljs-comment">// 🔴 Display names change, and two orgs can share one.</span>
+<span class="hljs-title class_">Workspace</span>.<span class="hljs-title function_">get</span>(workspaceName);</code></pre></figure>
+<h3 id="keep-one-consistency-boundary-per-operation"><a class="anchor" href="#keep-one-consistency-boundary-per-operation" aria-label="Link to this section">#</a>Keep one consistency boundary per operation</h3>
+<p>A single action is atomic. Calls across two actors are not: the second can fail after the first committed. When an operation must be all-or-nothing, put all of its state in one actor. When it can&#39;t be, design compensation: a step that undoes or retries the first.</p>
+<aside class="callout callout-note" role="note"><p class="callout-title">Note</p><p>Different actor types also never share a transaction. If two pieces of state must change together, they belong to the same actor.</p>
+</aside>
+<h3 id="avoid-hot-actors"><a class="anchor" href="#avoid-hot-actors" aria-label="Link to this section">#</a>Avoid hot actors</h3>
+<p>One instance handles roughly a thousand simple requests per second. Past that, callers see <code>transport</code> errors. If one key gets most of the traffic, split it by meaning (threads instead of one room, one counter per region), or aggregate writes before they reach the actor. Refer to <a href="../findings.html#38-sharding-what-can-and-cant-be-automated">Sharding</a>.</p>
+<h2 id="state"><a class="anchor" href="#state" aria-label="Link to this section">#</a>State</h2>
+<h3 id="keep-the-state-document-small-and-bounded"><a class="anchor" href="#keep-the-state-document-small-and-bounded" aria-label="Link to this section">#</a>Keep the state document small and bounded</h3>
+<p>Every change rewrites the whole document, and it is capped at 2 MB. Lists that grow forever eventually fail every action. Trim them in the action that appends.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ Bounded history.</span>
+state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">push</span>(message);
+state.<span class="hljs-property">messages</span> = state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">slice</span>(-<span class="hljs-number">500</span>);
+
+<span class="hljs-comment">// 🔴 Grows until the 2 MB limit, then every action fails.</span>
+state.<span class="hljs-property">messages</span>.<span class="hljs-title function_">push</span>(message);</code></pre></figure>
+<p>Move old data out, for example to D1 or R2, when you need to keep it.</p>
+<h3 id="type-empty-and-nullable-values-explicitly"><a class="anchor" href="#type-empty-and-nullable-values-explicitly" aria-label="Link to this section">#</a>Type empty and nullable values explicitly</h3>
+<p>State types are inferred from the initial value. An empty array literal infers <code>never[]</code>, and <code>null</code> infers <code>null</code>.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-attr">state</span>: { <span class="hljs-attr">messages</span>: [] <span class="hljs-keyword">as</span> <span class="hljs-title class_">Message</span>[], <span class="hljs-attr">owner</span>: <span class="hljs-literal">null</span> <span class="hljs-keyword">as</span> <span class="hljs-built_in">string</span> | <span class="hljs-literal">null</span> }
+
+<span class="hljs-comment">// 🔴 You can never push to `messages` or set `owner`.</span>
+<span class="hljs-attr">state</span>: { <span class="hljs-attr">messages</span>: [], <span class="hljs-attr">owner</span>: <span class="hljs-literal">null</span> }</code></pre></figure>
+<h3 id="store-plain-json-only"><a class="anchor" href="#store-plain-json-only" aria-label="Link to this section">#</a>Store plain JSON only</h3>
+<p>The state must survive a JSON round trip. Dates, Maps, Sets and class instances are rejected with a message that says what to use instead.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+state.<span class="hljs-property">lastSeenAt</span> = <span class="hljs-title class_">Date</span>.<span class="hljs-title function_">now</span>();          <span class="hljs-comment">// epoch milliseconds</span>
+state.<span class="hljs-property">tags</span> = [...<span class="hljs-keyword">new</span> <span class="hljs-title class_">Set</span>(state.<span class="hljs-property">tags</span>)];  <span class="hljs-comment">// arrays, not Sets</span>
+
+<span class="hljs-comment">// 🔴 Rejected: &quot;state.lastSeenAt is a Date (store an ISO string or epoch ms)&quot;</span>
+state.<span class="hljs-property">lastSeenAt</span> = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Date</span>();</code></pre></figure>
+<h3 id="plan-for-old-state-shapes"><a class="anchor" href="#plan-for-old-state-shapes" aria-label="Link to this section">#</a>Plan for old state shapes</h3>
+<p>There are no state migrations. Instances keep whatever shape they last saved. When you add a field, default it where you read it, or normalize it in <code>validate</code>.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ Works for instances saved before `tags` existed.</span>
+<span class="hljs-keyword">const</span> tags = state.<span class="hljs-property">tags</span> ?? [];
+
+<span class="hljs-comment">// 🔴 Throws for every pre-existing instance.</span>
+state.<span class="hljs-property">tags</span>.<span class="hljs-title function_">push</span>(tag);</code></pre></figure>
+<h3 id="derive-what-you-can-instead-of-storing-it"><a class="anchor" href="#derive-what-you-can-instead-of-storing-it" aria-label="Link to this section">#</a>Derive what you can instead of storing it</h3>
+<p>State that mirrors something live goes stale after a crash. Presence is the classic case: read it from <code>ctx.connections()</code> instead of keeping an <code>online</code> list.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ Always correct.</span>
+<span class="hljs-attr">online</span>: <span class="hljs-function">(<span class="hljs-params">ctx</span>) =&gt;</span> ctx.<span class="hljs-title function_">connections</span>().<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">c</span>) =&gt;</span> c.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>),
+
+<span class="hljs-comment">// 🔴 Stale if onClose never ran.</span>
+<span class="hljs-attr">online</span>: <span class="hljs-function">(<span class="hljs-params">{ state }</span>) =&gt;</span> state.<span class="hljs-property">online</span>,</code></pre></figure>
+<h2 id="actions-and-concurrency"><a class="anchor" href="#actions-and-concurrency" aria-label="Link to this section">#</a>Actions and concurrency</h2>
+<h3 id="keep-actions-short"><a class="anchor" href="#keep-actions-short" aria-label="Link to this section">#</a>Keep actions short</h3>
+<p>Actions on one instance run one at a time. A 20-second model call blocks every other action on that instance, including reads, for 20 seconds. Keep slow I/O out of hot paths, or move it to a <a href="../api/action-context.html#schedule">scheduled action</a>. For work that runs for minutes, use a raw Durable Object with a runtime built for it. Refer to <a href="../api/durable.html"><code>durable()</code></a>.</p>
+<h3 id="never-await-your-own-actor"><a class="anchor" href="#never-await-your-own-actor" aria-label="Link to this section">#</a>Never await your own actor</h3>
+<p>A call to the same instance waits behind the action that made it, so it never runs. Cycles (A awaits B, which awaits A) deadlock the same way.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ Call a local function.</span>
+<span class="hljs-keyword">const</span> total = <span class="hljs-title function_">computeTotal</span>(ctx.<span class="hljs-property">state</span>);
+
+<span class="hljs-comment">// 🔴 Deadlock: waits behind itself.</span>
+<span class="hljs-keyword">const</span> total = <span class="hljs-keyword">await</span> <span class="hljs-title class_">Cart</span>.<span class="hljs-title function_">get</span>(ctx.<span class="hljs-property">key</span>).<span class="hljs-title function_">total</span>();</code></pre></figure>
+<h3 id="validate-arguments-at-the-top-of-the-action"><a class="anchor" href="#validate-arguments-at-the-top-of-the-action" aria-label="Link to this section">#</a>Validate arguments at the top of the action</h3>
+<p>Types are checked at compile time, but the Actor Explorer and other callers can still send anything at runtime. Throw before you mutate.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-attr">add</span>: <span class="hljs-function">(<span class="hljs-params">{ state }, <span class="hljs-attr">quantity</span>: <span class="hljs-built_in">number</span></span>) =&gt;</span> {
+  <span class="hljs-keyword">if</span> (!<span class="hljs-title class_">Number</span>.<span class="hljs-title function_">isInteger</span>(quantity) || quantity &lt; <span class="hljs-number">1</span>) <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Error</span>(<span class="hljs-string">&quot;invalid quantity&quot;</span>);
+  state.<span class="hljs-property">count</span> += quantity;
+},</code></pre></figure>
+<h2 id="side-effects"><a class="anchor" href="#side-effects" aria-label="Link to this section">#</a>Side effects</h2>
+<h3 id="make-side-effects-safe-to-repeat"><a class="anchor" href="#make-side-effects-safe-to-repeat" aria-label="Link to this section">#</a>Make side effects safe to repeat</h3>
+<p>Calls to other services are not rolled back. If an action sends an email and then throws, the email is still sent, and a retry sends it again. Record the intent in state, and do the effect in a scheduled action that checks whether it already happened.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅ The intent commits atomically with the order; delivery is retried and idempotent.</span>
+<span class="hljs-attr">placeOrder</span>: <span class="hljs-function">(<span class="hljs-params">ctx, <span class="hljs-attr">order</span>: <span class="hljs-title class_">Order</span></span>) =&gt;</span> {
+  ctx.<span class="hljs-property">state</span>.<span class="hljs-property">orders</span>.<span class="hljs-title function_">push</span>(order);
+  ctx.<span class="hljs-title function_">schedule</span>(<span class="hljs-number">0</span>, <span class="hljs-string">&quot;sendConfirmation&quot;</span>, order.<span class="hljs-property">id</span>);
+},
+<span class="hljs-attr">sendConfirmation</span>: <span class="hljs-title function_">async</span> (ctx, <span class="hljs-attr">orderId</span>: <span class="hljs-built_in">string</span>) =&gt; {
+  <span class="hljs-keyword">if</span> (ctx.<span class="hljs-property">state</span>.<span class="hljs-property">confirmed</span>.<span class="hljs-title function_">includes</span>(orderId)) <span class="hljs-keyword">return</span>; <span class="hljs-comment">// already done</span>
+  <span class="hljs-keyword">await</span> <span class="hljs-title function_">sendEmail</span>(ctx.<span class="hljs-property">env</span>, orderId);                  <span class="hljs-comment">// your email call</span>
+  ctx.<span class="hljs-property">state</span>.<span class="hljs-property">confirmed</span>.<span class="hljs-title function_">push</span>(orderId);
+},
+
+<span class="hljs-comment">// 🔴 If validation fails after this, the email is out and the order isn&#x27;t saved.</span>
+<span class="hljs-attr">placeOrder</span>: <span class="hljs-title function_">async</span> (ctx, <span class="hljs-attr">order</span>: <span class="hljs-title class_">Order</span>) =&gt; {
+  <span class="hljs-keyword">await</span> <span class="hljs-title function_">sendEmail</span>(ctx.<span class="hljs-property">env</span>, order.<span class="hljs-property">id</span>);
+  ctx.<span class="hljs-property">state</span>.<span class="hljs-property">orders</span>.<span class="hljs-title function_">push</span>(order);
+},</code></pre></figure>
+<p>Scheduled actions are delivered at least once, so the check at the top matters.</p>
+<h3 id="deduplicate-non-idempotent-calls-with-request-ids"><a class="anchor" href="#deduplicate-non-idempotent-calls-with-request-ids" aria-label="Link to this section">#</a>Deduplicate non-idempotent calls with request IDs</h3>
+<p>Calls are never retried automatically. If you retry after a <code>transport</code> error or timeout, the first attempt may already have committed. Have callers send a request ID, and keep a bounded list of processed IDs.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-attr">charge</span>: <span class="hljs-function">(<span class="hljs-params">{ state }, <span class="hljs-attr">requestId</span>: <span class="hljs-built_in">string</span>, <span class="hljs-attr">cents</span>: <span class="hljs-built_in">number</span></span>) =&gt;</span> {
+  <span class="hljs-keyword">if</span> (state.<span class="hljs-property">processed</span>.<span class="hljs-title function_">includes</span>(requestId)) <span class="hljs-keyword">return</span> state.<span class="hljs-property">balance</span>;
+  state.<span class="hljs-property">balance</span> -= cents;
+  state.<span class="hljs-property">processed</span> = [...state.<span class="hljs-property">processed</span>, requestId].<span class="hljs-title function_">slice</span>(-<span class="hljs-number">1000</span>);
+  <span class="hljs-keyword">return</span> state.<span class="hljs-property">balance</span>;
+},</code></pre></figure>
+<h3 id="dont-treat-ctxsql-writes-as-transactional"><a class="anchor" href="#dont-treat-ctxsql-writes-as-transactional" aria-label="Link to this section">#</a>Don&#39;t treat <code>ctx.sql</code> writes as transactional</h3>
+<p><code>ctx.sql</code> and <code>ctx.storage</code> write immediately, even if the action throws afterwards. Use them for data where a stray row is harmless, such as append-only logs and caches. Keep anything that must change atomically in <code>ctx.state</code>.</p>
+<h2 id="errors"><a class="anchor" href="#errors" aria-label="Link to this section">#</a>Errors</h2>
+<h3 id="map-error-kinds-not-messages"><a class="anchor" href="#map-error-kinds-not-messages" aria-label="Link to this section">#</a>Map error kinds, not messages</h3>
+<p>Every failed call throws an <code>ActorError</code> with a <code>kind</code>. Branch on <code>kind</code> and <code>code</code>, never on message text.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+} <span class="hljs-keyword">catch</span> (err) {
+  <span class="hljs-keyword">if</span> (!(err <span class="hljs-keyword">instanceof</span> <span class="hljs-title class_">ActorError</span>)) <span class="hljs-keyword">throw</span> err;
+  <span class="hljs-keyword">if</span> (err.<span class="hljs-property">kind</span> === <span class="hljs-string">&quot;action&quot;</span>) <span class="hljs-keyword">return</span> <span class="hljs-title class_">Response</span>.<span class="hljs-title function_">json</span>({ <span class="hljs-attr">error</span>: err.<span class="hljs-property">code</span> ?? err.<span class="hljs-property">message</span> }, { <span class="hljs-attr">status</span>: <span class="hljs-number">400</span> });
+  <span class="hljs-keyword">if</span> (err.<span class="hljs-property">kind</span> === <span class="hljs-string">&quot;transport&quot;</span> || err.<span class="hljs-property">kind</span> === <span class="hljs-string">&quot;timeout&quot;</span>) <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">Response</span>(<span class="hljs-string">&quot;Try again&quot;</span>, { <span class="hljs-attr">status</span>: <span class="hljs-number">503</span> });
+  <span class="hljs-keyword">throw</span> err; <span class="hljs-comment">// validation and config errors are bugs</span>
+}</code></pre></figure>
+<h3 id="give-expected-failures-a-code"><a class="anchor" href="#give-expected-failures-a-code" aria-label="Link to this section">#</a>Give expected failures a code</h3>
+<p>Throw errors with a <code>code</code> property for conditions callers handle. The code survives the trip to the caller.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-keyword">if</span> (!task) <span class="hljs-keyword">throw</span> <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">assign</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">Error</span>(<span class="hljs-string">`No task <span class="hljs-subst">${id}</span>`</span>), { <span class="hljs-attr">code</span>: <span class="hljs-string">&quot;TASK_NOT_FOUND&quot;</span> });</code></pre></figure>
+<h3 id="put-a-timeout-on-user-facing-calls"><a class="anchor" href="#put-a-timeout-on-user-facing-calls" aria-label="Link to this section">#</a>Put a timeout on user-facing calls</h3>
+<p>A request should fail fast rather than hang behind a slow action. A timeout stops the wait, not the action.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
+<span class="hljs-keyword">const</span> items = <span class="hljs-keyword">await</span> <span class="hljs-title class_">Cart</span>.<span class="hljs-title function_">get</span>(userId, { <span class="hljs-attr">timeoutMs</span>: <span class="hljs-number">2_000</span> }).<span class="hljs-title function_">list</span>();</code></pre></figure>
+<h3 id="retry-only-what-is-safe-to-retry"><a class="anchor" href="#retry-only-what-is-safe-to-retry" aria-label="Link to this section">#</a>Retry only what is safe to retry</h3>
+<p>Retry only when <code>err.kind === &quot;transport&quot; &amp;&amp; err.retryable</code>, only for actions that are idempotent or deduplicated, and with backoff. Never retry <code>action</code> or <code>validation</code> errors: they fail the same way every time.</p>
+<h2 id="security-and-privacy"><a class="anchor" href="#security-and-privacy" aria-label="Link to this section">#</a>Security and privacy</h2>
+<ul>
+<li><strong>Keep the Actor Explorer local.</strong> It is only in <code>actors dev</code> builds and only answers on <code>localhost</code>. Don&#39;t proxy it anywhere.</li>
+<li><strong>Redact secrets from dev tooling.</strong> List sensitive state keys in <code>redact.state</code>, and actions that receive secrets in <code>redact.args</code>.</li>
+<li><strong>Prefer environment secrets over state.</strong> Read API keys from <code>ctx.env</code>. Store a user&#39;s token in state only when it is per-user, and redact it.</li>
+<li><strong>Treat connection data as trusted, messages as untrusted.</strong> Identity goes in <code>connect(..., { data })</code> from your Worker. Everything a client sends over a WebSocket is input to validate.</li>
+</ul>
+<h2 id="testing-and-debugging"><a class="anchor" href="#testing-and-debugging" aria-label="Link to this section">#</a>Testing and debugging</h2>
+<ul>
+<li><strong>Inspect, don&#39;t guess.</strong> <code>actors inspect &lt;Type&gt; &lt;key&gt;</code> and the Actor Explorer show state, the last 100 calls, errors with stacks, and open connections.</li>
+<li><strong>Log with <code>ctx.log</code>.</strong> Lines are attached to the invocation that wrote them, so you can read them next to its error.</li>
+<li><strong>Inject failures on purpose.</strong> A test-only action that throws after mutating state is the fastest way to confirm rollback in your own app.</li>
+<li><strong>Test against the real runtime.</strong> Run <code>actors dev</code> and drive it over HTTP and WebSockets. The project&#39;s own <a href="https://github.com/markdembo/actors-poc/blob/main/tests/e2e.mjs" target="_blank" rel="noopener">end-to-end tests</a> show the pattern.</li>
+</ul>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="websockets.html">WebSockets best practices</a></li>
+<li><a href="../semantics.html">Semantics</a></li>
+<li><a href="../reference/limits.html">Limits</a></li>
+<li><a href="https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/" target="_blank" rel="noopener">Rules of Durable Objects</a> ↗: the platform-level guide this page builds on.</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/best-practices/rules-of-actors.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="../tutorials/build-an-ai-agent.html"><span>Previous</span>Build a persistent AI agent</a><a class="next" href="websockets.html"><span>Next</span>WebSockets</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#design">Design</a></li><li class="d3"><a href="#model-one-actor-per-entity-that-owns-its-data">Model one actor per entity that owns its data</a></li><li class="d3"><a href="#derive-keys-from-authenticated-identity">Derive keys from authenticated identity</a></li><li class="d3"><a href="#make-keys-stable-and-structured">Make keys stable and structured</a></li><li class="d3"><a href="#keep-one-consistency-boundary-per-operation">Keep one consistency boundary per operation</a></li><li class="d3"><a href="#avoid-hot-actors">Avoid hot actors</a></li><li class="d2"><a href="#state">State</a></li><li class="d3"><a href="#keep-the-state-document-small-and-bounded">Keep the state document small and bounded</a></li><li class="d3"><a href="#type-empty-and-nullable-values-explicitly">Type empty and nullable values explicitly</a></li><li class="d3"><a href="#store-plain-json-only">Store plain JSON only</a></li><li class="d3"><a href="#plan-for-old-state-shapes">Plan for old state shapes</a></li><li class="d3"><a href="#derive-what-you-can-instead-of-storing-it">Derive what you can instead of storing it</a></li><li class="d2"><a href="#actions-and-concurrency">Actions and concurrency</a></li><li class="d3"><a href="#keep-actions-short">Keep actions short</a></li><li class="d3"><a href="#never-await-your-own-actor">Never await your own actor</a></li><li class="d3"><a href="#validate-arguments-at-the-top-of-the-action">Validate arguments at the top of the action</a></li><li class="d2"><a href="#side-effects">Side effects</a></li><li class="d3"><a href="#make-side-effects-safe-to-repeat">Make side effects safe to repeat</a></li><li class="d3"><a href="#deduplicate-non-idempotent-calls-with-request-ids">Deduplicate non-idempotent calls with request IDs</a></li><li class="d3"><a href="#dont-treat-ctxsql-writes-as-transactional">Don't treat ctx.sql writes as transactional</a></li><li class="d2"><a href="#errors">Errors</a></li><li class="d3"><a href="#map-error-kinds-not-messages">Map error kinds, not messages</a></li><li class="d3"><a href="#give-expected-failures-a-code">Give expected failures a code</a></li><li class="d3"><a href="#put-a-timeout-on-user-facing-calls">Put a timeout on user-facing calls</a></li><li class="d3"><a href="#retry-only-what-is-safe-to-retry">Retry only what is safe to retry</a></li><li class="d2"><a href="#security-and-privacy">Security and privacy</a></li><li class="d2"><a href="#testing-and-debugging">Testing and debugging</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

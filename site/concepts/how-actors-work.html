@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How actors work · Actors (unofficial PoC)</title>
+<meta name="description" content="This page explains what happens between Cart.get(&quot;alice&quot;).add(&quot;sku-1&quot;) and the result, and where the data lives.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="what-are-actors.html">What are actors?</a></li><li><a href="how-actors-work.html" aria-current="page" class="active">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Concepts</p>
+    <article><h1>How actors work</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>This page explains what happens between <code>Cart.get(&quot;alice&quot;).add(&quot;sku-1&quot;)</code> and the result, and where the data lives.</p>
+<h2 id="the-request-path"><a class="anchor" href="#the-request-path" aria-label="Link to this section">#</a>The request path</h2>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-plaintext">Worker                              Durable Object &quot;Cart:alice&quot; (class ActorHost)
+──────                              ─────────────────────────────────────────────
+Cart.get(&quot;alice&quot;)                   
+  .add(&quot;sku-1&quot;) ── RPC ──────────▶  queue ─▶ draft = copy of state
+                                             run add(ctx, &quot;sku-1&quot;)
+                                             validate state + return value
+                                             one SQLite transaction:
+                                               state, schedules, log entry
+                                             send queued WebSocket messages
+              ◀──────── result ────  (held until the write is durable)</code></pre></figure>
+<ol>
+<li><strong>Resolve.</strong> <code>Cart.get(&quot;alice&quot;)</code> maps to the Durable Object named <code>Cart:alice</code> in the single <code>ACTORS</code> namespace. Nothing is sent until you call an action.</li>
+<li><strong>Queue.</strong> The instance runs actions one at a time, in arrival order. A new call waits for the one before it, even across <code>await</code>.</li>
+<li><strong>Draft.</strong> The action receives a private copy of the saved state as <code>ctx.state</code>.</li>
+<li><strong>Run.</strong> Your code mutates the draft, or replaces it by assigning <code>ctx.state</code>.</li>
+<li><strong>Validate.</strong> The new state must be plain JSON under 2 MB and pass your <code>validate</code> function. The return value must be sendable to the caller.</li>
+<li><strong>Commit.</strong> State, scheduled work and the log entry are written in one SQLite transaction. If anything before this point failed, nothing is written.</li>
+<li><strong>Deliver.</strong> Messages queued with <code>conn.send</code> or <code>ctx.broadcast</code> go out after the commit. The caller&#39;s result is held until the write is durable.</li>
+</ol>
+<h2 id="state-and-transactions"><a class="anchor" href="#state-and-transactions" aria-label="Link to this section">#</a>State and transactions</h2>
+<p>Each instance stores one JSON document. Every action either commits a whole new version or changes nothing.</p>
+<p>What is <strong>inside</strong> the transaction:</p>
+<ul>
+<li>Changes to <code>ctx.state</code>.</li>
+<li><code>ctx.schedule()</code> and <code>ctx.cancelSchedule()</code>.</li>
+<li><code>ctx.broadcast()</code> and <code>conn.send()</code>: they are sent only if the commit succeeds.</li>
+</ul>
+<p>What is <strong>outside</strong> the transaction:</p>
+<ul>
+<li><code>fetch()</code> calls, emails and calls to other actors. They happen when you make them and are not undone.</li>
+<li>Writes through <code>ctx.sql</code> and <code>ctx.storage</code>. They apply immediately.</li>
+</ul>
+<p>Refer to <a href="../best-practices/rules-of-actors.html#make-side-effects-safe-to-repeat">Make side effects safe to repeat</a> for patterns.</p>
+<h2 id="one-host-class-for-every-actor-type"><a class="anchor" href="#one-host-class-for-every-actor-type" aria-label="Link to this section">#</a>One host class for every actor type</h2>
+<p>Every actor type runs in one Durable Object class, <code>ActorHost</code>, and instances are named <code>&lt;Type&gt;:&lt;key&gt;</code>. The practical result: adding, renaming or removing an actor type never needs a Durable Object migration. The CLI writes one migration, once.</p>
+<p>The trade-offs:</p>
+<ul>
+<li><strong>Per-type platform settings aren&#39;t available.</strong> For example, you can&#39;t set a location hint per actor type.</li>
+<li><strong>Renaming an actor type starts it fresh.</strong> The old instances&#39; data stays under the old name.</li>
+</ul>
+<h2 id="storage-layout"><a class="anchor" href="#storage-layout" aria-label="Link to this section">#</a>Storage layout</h2>
+<p>Each instance&#39;s SQLite database has three tables owned by the runtime:</p>
+<div class="table-wrap"><table><thead><tr><th>Table</th><th>Holds</th></tr></thead><tbody><tr><td><code>_actor_state</code></td><td>The state document, its version and timestamps</td></tr>
+<tr><td><code>_actor_log</code></td><td>The last 100 invocations: method, source, duration, error, logs, changed keys</td></tr>
+<tr><td><code>_actor_schedule</code></td><td>Pending scheduled actions, driven by the Durable Object alarm</td></tr></tbody></table></div>
+<p>You can create your own tables with <code>ctx.sql</code>. Avoid names that start with <code>_actor</code>.</p>
+<h2 id="lifecycle"><a class="anchor" href="#lifecycle" aria-label="Link to this section">#</a>Lifecycle</h2>
+<ul>
+<li><strong>Creation.</strong> An instance is created by its first action or WebSocket connection. <code>onCreate</code> runs once, inside that first transaction.</li>
+<li><strong>Eviction.</strong> The platform evicts idle instances from memory. Nothing is lost: memory only caches the saved document.</li>
+<li><strong>Hibernation.</strong> Instances with WebSocket connections can be evicted while their sockets stay open. The next message wakes the instance.</li>
+<li><strong>Deletion.</strong> There is no delete API yet. In local development, the Actor Explorer can delete an instance&#39;s storage.</li>
+</ul>
+<h2 id="generated-files"><a class="anchor" href="#generated-files" aria-label="Link to this section">#</a>Generated files</h2>
+<p><code>actors generate</code> (also run by <code>actors dev</code> and <code>actors deploy</code>) writes:</p>
+<div class="table-wrap"><table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody><tr><td><code>.actors/entry.ts</code></td><td>Production entry point: your Worker, <code>ActorHost</code> and your exported Durable Object classes</td></tr>
+<tr><td><code>.actors/entry.dev.ts</code></td><td>The same, plus the Actor Explorer at <code>/__actors</code></td></tr>
+<tr><td><code>.actors/manifest.json</code></td><td>What was discovered, for tools</td></tr>
+<tr><td><code>wrangler.jsonc</code></td><td>Adds <code>main</code>, the <code>ACTORS</code> binding and the <code>actors-v1</code> migration. Your other settings are kept.</td></tr></tbody></table></div>
+<p>Refer to <a href="../reference/configuration.html">Configuration</a> for details.</p>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="../semantics.html">Semantics</a>: the full list of guarantees.</li>
+<li><a href="../reference/limits.html">Limits</a>: sizes and counts.</li>
+<li><a href="https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/" target="_blank" rel="noopener">Durable Objects: lifecycle</a> ↗</li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/concepts/how-actors-work.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="what-are-actors.html"><span>Previous</span>What are actors?</a><a class="next" href="../tutorials/build-a-chat-room.html"><span>Next</span>Build a chat room</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#the-request-path">The request path</a></li><li class="d2"><a href="#state-and-transactions">State and transactions</a></li><li class="d2"><a href="#one-host-class-for-every-actor-type">One host class for every actor type</a></li><li class="d2"><a href="#storage-layout">Storage layout</a></li><li class="d2"><a href="#lifecycle">Lifecycle</a></li><li class="d2"><a href="#generated-files">Generated files</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

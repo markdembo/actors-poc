@@ -35,7 +35,7 @@ export interface HostOptions {
 }
 
 const LOG_LIMIT = 100;
-const MAX_STATE_BYTES = 2_000_000; // Durable Objects SQLite: max 2 MB per value
+const MAX_STATE_BYTES = 2_000_000; // Conservative PoC limit (Durable Objects SQLite allows 8 MB per value); every change rewrites the whole document
 const MAX_SCHEDULE_ATTEMPTS = 3;
 const ARG_PREVIEW_CHARS = 2_000;
 

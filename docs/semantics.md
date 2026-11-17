@@ -1,5 +1,8 @@
 # Semantics: persistence, concurrency, failure
 
+> [!WARNING]
+> **Unofficial, AI-generated proof of concept.** This is not Cloudflare documentation, and the project has no support. Read the [warning in the project README](../README.md) before using any of it.
+
 These are the guarantees the PoC makes. It promises nothing that Durable Objects do not provide underneath (PRD principle 3).
 
 ## Identity
@@ -50,7 +53,7 @@ Things that are **not** inside the transaction:
 
 ## Scheduling
 
-`ctx.schedule(seconds | Date, action, ...args)` stores a row and arms the Durable Object alarm. Scheduling is transactional: it is discarded if the action throws. Scheduled runs go through the same queued, transactional path, recorded with source `schedule`. Delivery is at least once: a failed run is retried up to 3 times with backoff and then dropped. The failure stays visible in the log. Scheduled actions should be idempotent.
+`ctx.schedule(seconds | Date, action, ...args)` stores a row and arms the Durable Object alarm. Scheduling is transactional: it is discarded if the action throws. Scheduled runs go through the same queued, transactional path, recorded with source `schedule`. Delivery is at least once: a failed run is attempted up to 3 times in total (retries after 2 s and 4 s), then dropped. The failure stays visible in the log. Scheduled actions should be idempotent.
 
 ## WebSockets
 
@@ -74,7 +77,7 @@ The state document has no schema version. If you change the shape of state, old 
 
 ## Limits
 
-- State document: 2 MB (the SQLite value limit). Put large or growing data in `ctx.sql` tables.
+- State document: 2 MB. This is a conservative limit chosen by this proof of concept: Durable Objects SQLite allows values up to 8 MB, but every change rewrites the whole document. Put large or growing data in `ctx.sql` tables.
 - Arguments and return values: structured-cloneable (Durable Object RPC).
 - Invocation log: the last 100 entries per instance. Arguments are recorded only in dev, never for actions listed in `redact.args`.
 - Instrumentation defaults to `all` in dev and `errors` in production. Override it with the `ACTORS_INSTRUMENTATION` var (`all` | `errors` | `off`).

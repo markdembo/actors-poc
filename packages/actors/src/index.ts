@@ -99,7 +99,7 @@ export interface ActionContext<S, C = unknown> {
   /**
    * Run one of this actor's actions later (Durable Object alarm under the hood).
    * Part of the same transaction: if the current action throws, nothing is scheduled.
-   * Scheduled runs are at-least-once: failures are retried up to 3 times with backoff.
+   * Scheduled runs are at-least-once: each is attempted up to 3 times in total (retries after 2 s and 4 s).
    * @param when seconds from now, or an absolute Date
    * @returns schedule id
    */

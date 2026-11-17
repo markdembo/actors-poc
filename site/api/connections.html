@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connections · Actors (unofficial PoC)</title>
+<meta name="description" content="Add connections to an actor to accept WebSockets through Actor.connect(). Each hook runs like an action: queued with the instance's other actions, committed atomically, and rolled back if it throws. Sockets are accepted through the WebSocket Hibernation API ↗, so an idle instance can leave memory without closing them.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="index.html">API reference</a></li><li><a href="actor.html">actor()</a></li><li><a href="action-context.html">Action context</a></li><li><a href="connections.html" aria-current="page" class="active">Connections</a></li><li><a href="errors.html">Errors</a></li><li><a href="durable.html">durable()</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">API</p>
+    <article><h1>Connections</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>Add <code>connections</code> to an actor to accept WebSockets through <a href="actor.html#connect"><code>Actor.connect()</code></a>. Each hook runs like an action: queued with the instance&#39;s other actions, committed atomically, and rolled back if it throws. Sockets are accepted through the <a href="https://developers.cloudflare.com/durable-objects/best-practices/websockets/" target="_blank" rel="noopener">WebSocket Hibernation API</a> ↗, so an idle instance can leave memory without closing them.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">import</span> { actor, typed } <span class="hljs-keyword">from</span> <span class="hljs-string">&quot;actors-poc&quot;</span>;
+
+<span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> <span class="hljs-title class_">Room</span> = <span class="hljs-title function_">actor</span>({
+  <span class="hljs-attr">state</span>: { <span class="hljs-attr">messages</span>: [] <span class="hljs-keyword">as</span> <span class="hljs-built_in">string</span>[] },
+  <span class="hljs-attr">connections</span>: {
+    <span class="hljs-attr">data</span>: typed&lt;{ <span class="hljs-attr">user</span>: <span class="hljs-built_in">string</span> }&gt;(),
+    <span class="hljs-title function_">onConnect</span>(<span class="hljs-params">ctx, conn</span>) { conn.<span class="hljs-title function_">send</span>({ <span class="hljs-attr">history</span>: ctx.<span class="hljs-property">state</span>.<span class="hljs-property">messages</span> }); },
+    <span class="hljs-title function_">onMessage</span>(<span class="hljs-params">ctx, conn, message</span>) {
+      ctx.<span class="hljs-property">state</span>.<span class="hljs-property">messages</span>.<span class="hljs-title function_">push</span>(<span class="hljs-title class_">String</span>(message));
+      ctx.<span class="hljs-title function_">broadcast</span>({ <span class="hljs-attr">from</span>: conn.<span class="hljs-property">data</span>.<span class="hljs-property">user</span>, <span class="hljs-attr">message</span>: <span class="hljs-title class_">String</span>(message) });
+    },
+    <span class="hljs-title function_">onClose</span>(<span class="hljs-params">ctx, conn</span>) { ctx.<span class="hljs-title function_">broadcast</span>({ <span class="hljs-attr">left</span>: conn.<span class="hljs-property">data</span>.<span class="hljs-property">user</span> }); },
+  },
+  <span class="hljs-attr">actions</span>: {},
+});</code></pre></figure>
+<h2 id="connectionsdata"><a class="anchor" href="#connectionsdata" aria-label="Link to this section">#</a><code>connections.data</code></h2>
+<p><code>data?: C</code></p>
+<p>A type witness for per-connection data. Write <code>data: typed&lt;YourType&gt;()</code>. The values come from <code>Actor.connect(key, request, { data })</code>, never from the client.</p>
+<h2 id="typed"><a class="anchor" href="#typed" aria-label="Link to this section">#</a><code>typed</code></h2>
+<p><code>typed&lt;T&gt;(): T</code></p>
+<p>Returns <code>undefined</code> with the type <code>T</code>. It exists only to declare <code>connections.data</code>.</p>
+<h2 id="onconnect"><a class="anchor" href="#onconnect" aria-label="Link to this section">#</a><code>onConnect</code></h2>
+<p><code>onConnect?(ctx: ActionContext&lt;S, C&gt;, conn: Connection&lt;C&gt;): void | Promise&lt;void&gt;</code></p>
+<p>A client is connecting. Runs before the socket is accepted. Throw to refuse: the client gets HTTP 403 with your message, and no socket opens. Messages sent to <code>conn</code> are delivered right after the socket is accepted.</p>
+<h2 id="onmessage"><a class="anchor" href="#onmessage" aria-label="Link to this section">#</a><code>onMessage</code></h2>
+<p><code>onMessage?(ctx: ActionContext&lt;S, C&gt;, conn: Connection&lt;C&gt;, message: string | ArrayBuffer): void | Promise&lt;void&gt;</code></p>
+<p>A message arrived. If the hook throws, its state changes and queued messages are discarded, and the socket stays open. Catch errors and <code>conn.send</code> a reply if the client should know. Without this hook, incoming messages are ignored.</p>
+<h2 id="onclose"><a class="anchor" href="#onclose" aria-label="Link to this section">#</a><code>onClose</code></h2>
+<p><code>onClose?(ctx: ActionContext&lt;S, C&gt;, conn: Connection&lt;C&gt;, info: { code: number; reason: string; wasClean: boolean }): void | Promise&lt;void&gt;</code></p>
+<p>The client disconnected, or the connection failed. Runs once per connection.</p>
+<h2 id="connection"><a class="anchor" href="#connection" aria-label="Link to this section">#</a><code>Connection</code></h2>
+<p>The <code>conn</code> argument of every hook.</p>
+<div class="table-wrap"><table><thead><tr><th>Member</th><th>Type</th><th>Description</th></tr></thead><tbody><tr><td><code>id</code></td><td><code>string</code></td><td>Stable ID for this connection. Survives hibernation.</td></tr>
+<tr><td><code>data</code></td><td><code>C</code></td><td>The data your Worker passed to <code>connect()</code>.</td></tr>
+<tr><td><code>send(message)</code></td><td><code>(message: string | object | number | boolean | null) =&gt; void</code></td><td>Queues a message to this connection only. Sent after commit.</td></tr>
+<tr><td><code>close(code?, reason?)</code></td><td><code>(code?: number, reason?: string) =&gt; void</code></td><td>Closes this connection after commit.</td></tr></tbody></table></div>
+<h2 id="delivery-guarantees"><a class="anchor" href="#delivery-guarantees" aria-label="Link to this section">#</a>Delivery guarantees</h2>
+<ul>
+<li><strong>After commit.</strong> Messages are delivered only after the invocation that queued them commits, in the order they were queued.</li>
+<li><strong>At most once.</strong> Clients that are disconnected when a message is sent don&#39;t get it. Resync on reconnect.</li>
+<li><strong>Bounded data.</strong> Connection data is stored on the socket, so it is limited to 8 KB of JSON.</li>
+</ul>
+<p>Refer to <a href="../best-practices/websockets.html">WebSockets best practices</a> and <a href="../semantics.html#websockets">Semantics: WebSockets</a>.</p>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/api/connections.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="action-context.html"><span>Previous</span>Action context</a><a class="next" href="errors.html"><span>Next</span>Errors</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#connectionsdata">connections.data</a></li><li class="d2"><a href="#typed">typed</a></li><li class="d2"><a href="#onconnect">onConnect</a></li><li class="d2"><a href="#onmessage">onMessage</a></li><li class="d2"><a href="#onclose">onClose</a></li><li class="d2"><a href="#connection">Connection</a></li><li class="d2"><a href="#delivery-guarantees">Delivery guarantees</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>
