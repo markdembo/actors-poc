@@ -1,0 +1,9 @@
+{
+  "name": "actors-poc-docs",
+  "private": true,
+  "type": "module",
+  "description": "Deploys the static docs site (../../site) as an assets-only Worker with the cf CLI. Unofficial proof of concept.",
+  "scripts": {
+    "deploy": "npx --yes cf@1.0.0-rc.1 deploy ../../site"
+  }
+}
