@@ -7,26 +7,18 @@ This page explains what happens between `Cart.get("alice").add("sku-1")` and the
 
 ## The request path
 
-```txt
-Your Worker                         Actor Cart "alice"
-───────────                         ──────────────────
-Cart.get("alice")
-  .add("sku-1") ── call ─────────▶  queue ─▶ draft = copy of state
-                                             run add(ctx, "sku-1")
-                                             validate state + return value
-                                             save in one transaction:
-                                               state, schedules, activity log
-                                             send queued WebSocket messages
-              ◀──────── result ────  (only once the save is durable)
-```
+![Your Worker calls Cart "alice". The actor queues the call, drafts a private copy of its state, runs the action, validates, saves in one transaction and delivers queued messages. The result returns once the save is durable; if the action throws or fails validation, nothing is saved and the Worker gets an ActorError.](../images/request-path.svg)
 
-1. **Address.** `Cart.get("alice")` gives you a reference to the actor `Cart` with key `"alice"`. Nothing is sent until you call an action.
-2. **Queue.** The actor handles calls one at a time, in arrival order. A new call waits for the one before it, even while that one is awaiting I/O.
-3. **Draft.** The action receives a private copy of the saved state as `ctx.state`.
-4. **Run.** Your code changes the draft, or replaces it by assigning `ctx.state`.
-5. **Validate.** The new state must be plain JSON under 2 MB and pass your `validate` function. The return value must be sendable to the caller.
-6. **Save.** State, scheduled work and the activity log entry are written in one transaction. If anything before this point failed, nothing is written.
-7. **Deliver.** Messages queued with `conn.send` or `ctx.broadcast` go out. The caller gets the result once the save is durable.
+`Cart.get("alice")` gives you a reference to the actor `Cart` with key `"alice"`. Nothing is sent until you call an action. Then the call goes through six steps:
+
+1. **Queue.** The actor handles calls one at a time, in arrival order. A new call waits for the one before it, even while that one is awaiting I/O.
+2. **Draft.** The action receives a private copy of the saved state as `ctx.state`.
+3. **Run.** Your code changes the draft, or replaces it by assigning `ctx.state`.
+4. **Validate.** The new state must be plain JSON under 2 MB and pass your `validate` function. The return value must be sendable to the caller.
+5. **Save.** State, scheduled work and the activity log entry are written in one transaction. If anything before this point failed, nothing is written.
+6. **Deliver.** Messages queued with `conn.send` or `ctx.broadcast` go out. The caller gets the result once the save is durable.
+
+If the action throws in step 3, or the result fails step 4, the draft is discarded: nothing is saved, nothing is sent, and the caller gets an [`ActorError`](../api/errors.md).
 
 ## State and transactions
 

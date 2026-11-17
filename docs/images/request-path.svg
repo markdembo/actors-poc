@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 404" width="780" height="404" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <title>The request path of an actor call</title>
+  <desc>Your Worker calls Cart "alice" .add("sku-1"). The actor queues the call, makes a private draft of its state, runs the action on the draft, validates the result, saves state, schedules and the activity log in one transaction, then sends queued WebSocket messages. The result returns to the Worker once the save is durable. If the action throws or fails validation, nothing is saved and the Worker receives an ActorError.</desc>
+  <style>
+    /* Colors come from the docs site's theme when inlined; the fallbacks serve GitHub and plain image views. */
+    .dg-ink { fill: var(--d-ink, #1b1b1f); }
+    .dg-muted { fill: var(--d-muted, #6b6b76); }
+    .dg-accent-text { fill: var(--d-accent-ink, #b64306); }
+    .dg-err-text { fill: var(--d-error, #c81e1e); }
+    .dg-lane { fill: var(--d-soft, #f7f7f8); stroke: var(--d-line, #e4e4e9); }
+    .dg-actor { fill: var(--d-accent-soft, #fff1e8); stroke: var(--d-accent, #e8590c); }
+    .dg-step { fill: var(--d-panel, #ffffff); stroke: var(--d-line, #e4e4e9); }
+    .dg-step-key { fill: var(--d-panel, #ffffff); stroke: var(--d-accent, #e8590c); stroke-width: 1.5; }
+    .dg-num { fill: var(--d-accent, #e8590c); }
+    .dg-num-text { fill: var(--d-on-accent, #ffffff); }
+    .dg-flow { stroke: var(--d-ink, #1b1b1f); stroke-width: 1.5; fill: none; }
+    .dg-flow-err { stroke: var(--d-error, #c81e1e); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+    .dg-head { fill: var(--d-ink, #1b1b1f); }
+    .dg-head-err { fill: var(--d-error, #c81e1e); }
+    .dg-label { font-size: 11px; font-weight: 650; letter-spacing: .06em; }
+    .dg-title { font-size: 15px; font-weight: 650; }
+    .dg-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .dg-step-name { font-size: 13.5px; font-weight: 650; }
+    .dg-step-detail { font-size: 12.5px; }
+    .dg-note { font-size: 11.5px; }
+    @media (prefers-color-scheme: dark) {
+      .dg-ink { fill: var(--d-ink, #ececf1); }
+      .dg-muted { fill: var(--d-muted, #9a9aa6); }
+      .dg-accent-text { fill: var(--d-accent-ink, #ffa463); }
+      .dg-err-text { fill: var(--d-error, #f87171); }
+      .dg-lane { fill: var(--d-soft, #17171b); stroke: var(--d-line, #2a2a31); }
+      .dg-actor { fill: var(--d-accent-soft, #2b1d14); stroke: var(--d-accent, #ff8a3d); }
+      .dg-step { fill: var(--d-panel, #111114); stroke: var(--d-line, #2a2a31); }
+      .dg-step-key { fill: var(--d-panel, #111114); stroke: var(--d-accent, #ff8a3d); }
+      .dg-num { fill: var(--d-accent, #ff8a3d); }
+      .dg-num-text { fill: var(--d-on-accent, #1b1b1f); }
+      .dg-flow { stroke: var(--d-ink, #ececf1); }
+      .dg-flow-err { stroke: var(--d-error, #f87171); }
+      .dg-head { fill: var(--d-ink, #ececf1); }
+      .dg-head-err { fill: var(--d-error, #f87171); }
+    }
+  </style>
+  <defs>
+    <marker id="rp-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="dg-head"/>
+    </marker>
+    <marker id="rp-head-err" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="dg-head-err"/>
+    </marker>
+  </defs>
+
+  <!-- Your Worker -->
+  <rect class="dg-lane" x="20" y="60" width="180" height="324" rx="12"/>
+  <text class="dg-label dg-muted" x="36" y="86">YOUR WORKER</text>
+  <text class="dg-code dg-ink" x="36" y="118">Cart.get("alice")</text>
+  <text class="dg-code dg-ink" x="52" y="138">.add("sku-1")</text>
+
+  <!-- Actor -->
+  <rect class="dg-actor" x="330" y="20" width="430" height="364" rx="14"/>
+  <text class="dg-label dg-accent-text" x="350" y="46">ACTOR</text>
+  <text class="dg-title dg-ink" x="350" y="70">Cart <tspan class="dg-code">"alice"</tspan></text>
+
+  <!-- Steps -->
+  <g>
+    <rect class="dg-step" x="350" y="92" width="390" height="38" rx="9"/>
+    <circle class="dg-num" cx="372" cy="111" r="11"/><text class="dg-num-text" x="372" y="115.5" font-size="12" font-weight="700" text-anchor="middle">1</text>
+    <text class="dg-step-name dg-ink" x="392" y="115.5">Queue</text>
+    <text class="dg-step-detail dg-muted" x="472" y="115.5">one call at a time, in arrival order</text>
+  </g>
+  <g>
+    <rect class="dg-step" x="350" y="138" width="390" height="38" rx="9"/>
+    <circle class="dg-num" cx="372" cy="157" r="11"/><text class="dg-num-text" x="372" y="161.5" font-size="12" font-weight="700" text-anchor="middle">2</text>
+    <text class="dg-step-name dg-ink" x="392" y="161.5">Draft</text>
+    <text class="dg-step-detail dg-muted" x="472" y="161.5">a private copy of the saved state</text>
+  </g>
+  <g>
+    <rect class="dg-step" x="350" y="184" width="390" height="38" rx="9"/>
+    <circle class="dg-num" cx="372" cy="203" r="11"/><text class="dg-num-text" x="372" y="207.5" font-size="12" font-weight="700" text-anchor="middle">3</text>
+    <text class="dg-step-name dg-ink" x="392" y="207.5">Run</text>
+    <text class="dg-step-detail dg-muted" x="472" y="207.5">add(ctx, "sku-1") changes the draft</text>
+  </g>
+  <g>
+    <rect class="dg-step" x="350" y="230" width="390" height="38" rx="9"/>
+    <circle class="dg-num" cx="372" cy="249" r="11"/><text class="dg-num-text" x="372" y="253.5" font-size="12" font-weight="700" text-anchor="middle">4</text>
+    <text class="dg-step-name dg-ink" x="392" y="253.5">Validate</text>
+    <text class="dg-step-detail dg-muted" x="472" y="253.5">plain JSON, under 2 MB, your checks</text>
+  </g>
+  <g>
+    <rect class="dg-step-key" x="350" y="276" width="390" height="38" rx="9"/>
+    <circle class="dg-num" cx="372" cy="295" r="11"/><text class="dg-num-text" x="372" y="299.5" font-size="12" font-weight="700" text-anchor="middle">5</text>
+    <text class="dg-step-name dg-ink" x="392" y="299.5">Save</text>
+    <text class="dg-step-detail dg-muted" x="472" y="299.5">state, schedules, log: one transaction</text>
+  </g>
+  <g>
+    <rect class="dg-step" x="350" y="322" width="390" height="38" rx="9"/>
+    <circle class="dg-num" cx="372" cy="341" r="11"/><text class="dg-num-text" x="372" y="345.5" font-size="12" font-weight="700" text-anchor="middle">6</text>
+    <text class="dg-step-name dg-ink" x="392" y="345.5">Deliver</text>
+    <text class="dg-step-detail dg-muted" x="472" y="345.5">queued WebSocket messages go out</text>
+  </g>
+
+  <!-- Call -->
+  <line class="dg-flow" x1="200" y1="111" x2="348" y2="111" marker-end="url(#rp-head)"/>
+  <text class="dg-note dg-ink" x="265" y="102" text-anchor="middle" font-weight="600">call</text>
+
+  <!-- Failure: from Run or Validate back to the Worker -->
+  <line class="dg-flow-err" x1="348" y1="226" x2="202" y2="226" marker-end="url(#rp-head-err)"/>
+  <text class="dg-note dg-err-text" x="265" y="204" text-anchor="middle" font-weight="600">throws or invalid</text>
+  <text class="dg-note dg-err-text" x="265" y="218" text-anchor="middle">nothing saved</text>
+  <text class="dg-note dg-err-text" x="265" y="242" text-anchor="middle">ActorError</text>
+
+  <!-- Result -->
+  <line class="dg-flow" x1="348" y1="341" x2="202" y2="341" marker-end="url(#rp-head)"/>
+  <text class="dg-note dg-ink" x="265" y="319" text-anchor="middle" font-weight="600">result</text>
+  <text class="dg-note dg-muted" x="265" y="333" text-anchor="middle">after the save</text>
+</svg>

@@ -110,6 +110,22 @@ article p > strong:only-child > a:only-child:hover { text-decoration: none; filt
 :root[data-theme="dark"] article p > strong:only-child > a:only-child { color: #1b1b1f; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) article p > strong:only-child > a:only-child { color: #1b1b1f; } }
 
+/* Diagrams: inlined SVGs read their colors from these variables, so they follow the theme toggle. */
+:root {
+  --d-ink: var(--ink); --d-muted: var(--muted); --d-line: var(--line); --d-soft: var(--bg-soft); --d-panel: var(--bg);
+  --d-accent: var(--accent); --d-accent-ink: var(--accent-ink); --d-accent-soft: var(--accent-soft); --d-error: var(--caution);
+  --d-on-accent: #ffffff;
+}
+:root[data-theme="dark"] { --d-on-accent: #1b1b1f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --d-on-accent: #1b1b1f; } }
+figure.diagram { margin: 8px 0 24px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+figure.diagram svg { display: block; width: 100%; height: auto; max-width: 780px; margin: 0 auto; }
+@media (max-width: 860px) {
+  /* Keep diagram text readable on phones: scroll sideways instead of shrinking. */
+  figure.diagram { overflow-x: auto; padding: 12px; }
+  figure.diagram svg { min-width: 640px; }
+}
+
 /* Tables */
 .table-wrap { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--line); border-radius: 10px; }
 table { border-collapse: collapse; width: 100%; font-size: 14.5px; }

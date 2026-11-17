@@ -134,6 +134,20 @@ function renderPage(docPath) {
         const kind = existsSync(abs) && statSync(abs).isDirectory() ? "tree" : "blob";
         return `<a href="${REPO_URL}/${kind}/main/${repoPath}${hash}"${t} target="_blank" rel="noopener">${inner}</a>`;
       },
+      image({ href, text }) {
+        // Local SVG diagrams are inlined so they follow the site's theme (colors come from --d-* variables).
+        if (!/^https?:/.test(href) && href.endsWith(".svg")) {
+          const abs = resolve(dirname(srcFile), href);
+          if (existsSync(abs)) {
+            const svg = readFileSync(abs, "utf8")
+              .replace(/<\?xml[^>]*>\s*/, "")
+              .replace(/<svg\b([^>]*?)\swidth="[^"]*"([^>]*?)\sheight="[^"]*"/, "<svg$1$2")
+              .replace("<svg", `<svg role="img" aria-label="${escapeHtml(text)}"`);
+            return `<figure class="diagram">${svg}</figure>`;
+          }
+        }
+        return `<img src="${escapeHtml(href)}" alt="${escapeHtml(text)}" loading="lazy">`;
+      },
       table(token) {
         // Default table rendering, wrapped for horizontal scrolling on small screens.
         const header = token.header.map((c) => `<th${c.align ? ` align="${c.align}"` : ""}>${this.parser.parseInline(c.tokens)}</th>`).join("");
@@ -147,6 +161,7 @@ function renderPage(docPath) {
 
   let html = marked.parse(md);
   html = toCallouts(html);
+  html = html.replace(/<p>\s*(<figure class="diagram">[\s\S]*?<\/figure>)\s*<\/p>/g, "$1"); // a figure can't sit in a <p>
 
   const title = stripTags(html.match(/<h1>([\s\S]*?)<\/h1>/)?.[1] ?? "Docs");
   const description = stripTags(
