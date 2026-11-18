@@ -6,10 +6,15 @@ import { Room } from "./room";
 import { Shape } from "./shape";
 
 // POST /call/:key/:method?timeoutMs=  body: JSON array of args
+// GET  /delete/:key[/room]          Probe.delete(key) or Room.delete(key)
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const [, route, key, method] = url.pathname.split("/").map(decodeURIComponent);
+    if (route === "delete") {
+      const value = await (method === "room" ? Room : Probe).delete(key);
+      return Response.json({ ok: true, value });
+    }
     if (route === "ws") return Room.connect(key, request, { data: { user: url.searchParams.get("user") ?? "" } });
     if (route === "room") {
       const args = request.method === "POST" ? await request.json<unknown[]>() : [];

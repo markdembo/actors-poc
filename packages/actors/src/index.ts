@@ -121,6 +121,13 @@ export interface ActionContext<S, C = unknown> {
   broadcast(message: string | object | number | boolean | null, options?: BroadcastOptions): void;
   /** Open WebSocket connections to this instance. */
   connections(): ConnectionInfo<C>[];
+  /**
+   * Delete this instance when the action returns: instead of saving, its state, schedules, invocation log
+   * and `ctx.sql` tables are deleted, queued messages are sent, and its WebSockets are closed (`onClose` does
+   * not run). If the action throws, nothing is deleted. The next call to this key starts a new instance.
+   * Typical use: a scheduled `expire` action, or closing an account.
+   */
+  destroy(): void;
 }
 
 /** What a migration receives besides the old state. Runs synchronously: no awaits, no fetch, no other actors. */
@@ -195,6 +202,13 @@ export interface Actor<S extends object, A extends Record<string, ActionFn<S, C>
    * Returns 426 if the request is not a WebSocket upgrade, 403 if `onConnect` refused it.
    */
   connect(key: string, request: Request, options?: ConnectOptions<C>): Promise<Response>;
+  /**
+   * Permanently delete the instance with this key: its state, pending schedules, invocation log and `ctx.sql`
+   * tables. Its WebSockets are closed (`onClose` does not run). Waits for the action that is running, then
+   * runs before any queued after it; a later call to this key starts a new instance from the initial state.
+   * Resolves to whether the instance existed. Deleting a key that was never used creates nothing.
+   */
+  delete(key: string): Promise<boolean>;
   /** The actor type name. Throws if the actor was never registered (see `actors generate`). */
   readonly name: string;
   /** @internal */
@@ -283,10 +297,17 @@ export function actor<S extends object, A extends Record<string, ActionFn<S, C>>
       const stub = resolveStub(name, key) as unknown as Fetcher;
       return stub.fetch(new Request(request, { headers }));
     },
+    async delete(key: string) {
+      const name = def.name;
+      checkKey(name, key, "delete");
+      const stub = resolveStub(name, key);
+      const req = { actor: name, key, method: "delete", callerVersion: codeVersion(workerEnv) };
+      return (await invoke(() => stub.actorDelete(req), req, {})) as boolean;
+    },
     get(key: string, options: GetOptions = {}) {
       const name = def.name;
       checkKey(name, key, "get");
-      let stub: { actorInvoke(req: InvokeRequest): Promise<InvokeResult> } | undefined;
+      let stub: HostStub | undefined;
       const cache = new Map<string, (...args: unknown[]) => Promise<unknown>>();
       return new Proxy({} as ActorRef<A>, {
         get(_target, prop) {
@@ -300,9 +321,9 @@ export function actor<S extends object, A extends Record<string, ActionFn<S, C>>
                   { kind: "config", actor: name, key, method: prop },
                 );
               }
-              stub ??= resolveStub(name, key);
-              const callerVersion = codeVersion(workerEnv);
-              return invoke(stub, { actor: name, key, method: prop, args, source: "rpc", callerVersion }, options);
+              const s = (stub ??= resolveStub(name, key));
+              const req: InvokeRequest = { actor: name, key, method: prop, args, source: "rpc", callerVersion: codeVersion(workerEnv) };
+              return invoke(() => s.actorInvoke(req), req, options);
             };
             cache.set(prop, fn);
           }
@@ -343,20 +364,24 @@ function resolveStub(name: string, key: string) {
       { kind: "config", actor: name, key },
     );
   }
-  return ns.get(ns.idFromName(`${name}:${key}`)) as unknown as {
-    actorInvoke(req: InvokeRequest): Promise<InvokeResult>;
-  };
+  return ns.get(ns.idFromName(`${name}:${key}`)) as unknown as HostStub;
+}
+
+/** The RPC surface of the runtime's ActorHost that callers use. */
+interface HostStub {
+  actorInvoke(req: InvokeRequest): Promise<InvokeResult>;
+  actorDelete(req: { actor: string; key: string; callerVersion?: string }): Promise<InvokeResult>;
 }
 
 async function invoke(
-  stub: { actorInvoke(req: InvokeRequest): Promise<InvokeResult> },
-  req: InvokeRequest,
+  send: () => Promise<InvokeResult>,
+  req: { actor: string; key: string; method: string },
   options: GetOptions,
 ): Promise<unknown> {
   const where = { actor: req.actor, key: req.key, method: req.method };
   let result: InvokeResult;
   try {
-    const call = stub.actorInvoke(req);
+    const call = send();
     result = options.timeoutMs ? await withTimeout(call, options.timeoutMs, where) : await call;
   } catch (err) {
     if (err instanceof ActorError) throw err;

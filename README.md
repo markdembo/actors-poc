@@ -97,6 +97,8 @@ You only need four ideas:
 - **State**: a JSON document per instance. Actions get a private draft. It is committed atomically when the action returns and discarded when it throws.
 - **Action**: an async function `(ctx, ...args)`. Callers see `(...args) => Promise<Result>`.
 
+To remove an instance and everything it stores, call `Counter.delete(key)` from the Worker, or `ctx.destroy()` from one of its actions (for example a scheduled `expire`). Every call also writes one structured log line for Workers Logs, so you can debug production by actor and key without the Explorer.
+
 Escape hatches for when you need them: `ctx.schedule()` / `ctx.cancelSchedule()` (alarms), `ctx.sql` and `ctx.storage` (raw SQLite and storage, outside the state transaction), `ctx.env` (bindings), and Workflow or entrypoint classes exported from `src/index.ts` (re-exported automatically).
 
 ### WebSockets
@@ -195,8 +197,9 @@ actor({
 })
 
 Actor.get(key, { timeoutMs? }) → ActorRef      // typed proxy; cheap; no network until called
+Actor.delete(key) → Promise<boolean>            // delete the instance and everything it stores; true if it existed
 
-ctx: { state, actor, key, log(...), schedule(secondsOrDate, action, ...args), cancelSchedule(id), broadcast(msg, { except?, only? }), connections(), env, storage, sql }
+ctx: { state, actor, key, log(...), schedule(secondsOrDate, action, ...args), cancelSchedule(id), broadcast(msg, { except?, only? }), connections(), destroy(), env, storage, sql }
 
 Actor.connect(key, request, { data? }) → Promise<Response>   // WebSocket upgrade; 426 if not one, 403 if onConnect throws
 connections: { data?: typed<C>(), onConnect?(ctx, conn), onMessage?(ctx, conn, message), onClose?(ctx, conn, { code, reason, wasClean }) }
@@ -225,8 +228,10 @@ ActorError { kind: "action" | "validation" | "config" | "transport" | "timeout" 
 pnpm test
 ```
 
-This runs typecheck, the type tests, the compatibility-check tests and the e2e suite: 42 end-to-end checks against real `workerd`.
+This runs typecheck, the type tests, the compatibility-check tests and the e2e suite: 50 end-to-end checks against real `workerd`.
 - **Actors:** restart persistence, rollback, 100-way concurrency, FIFO ordering, timeouts, alarms and redaction.
+- **Deleting:** `Actor.delete` and `ctx.destroy()` leave no tables behind, drop pending schedules, close sockets without running `onClose`, and the key starts fresh. A scheduled `ctx.destroy()` works as an expiry.
+- **Logs:** one structured line per call, migration and delete; failures only in dev, everything in production, never arguments.
 - **WebSockets:** typed hooks, sends that wait for the save, a rolled-back hook sending nothing, broadcasts from actions, `onClose`, refusing connections, and client-forged headers being ignored.
 - **Raw Durable Objects:** zero-config wiring with `durable()`, browsing their tables, and the warnings for removed classes and binding clashes.
 - **Explorer:** lists instances through Wrangler's Local Explorer, inspecting an unknown key or id creates nothing, inspect answers while an action is running, and it is localhost-only.

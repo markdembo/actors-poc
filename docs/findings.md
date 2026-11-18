@@ -159,6 +159,17 @@ Not solved: `any`/`unknown` and changes in meaning aren't caught; a production v
 
 **Future work: retiring old migrations.** Lazy migration means a migration can never be deleted, because some instance may not have run it. Old migrations cost little (untyped functions that run only on instances that haven't migrated), so this stays unbuilt until one of these happens: data must really be gone (a removed field that held personal data stays in every instance nobody calls), old migrations hold back code you want to delete, or users report long migration lists as a problem. The design: an `actors migrate` sweep visits every instance (locally through the Local Explorer, in production through the API that lists a namespace's objects; each instance knows its own key), runs pending migrations and records the lowest schema in the lock file. Then `migrations: [...squashed(n), ...]` replaces the first n with placeholders that keep the schema numbers and refuse any instance still below n. The check refuses squashing past what the last sweep proved. The same sweep can count pending scheduled calls per action, which would let the check decide when removing an action is safe instead of trusting `--allow-breaking`.
 
+### 3.11 Deleting instances and production logs
+Two things production needed that the Explorer can't give it.
+
+**Deleting.** `Actor.delete(key)` from the Worker and `ctx.destroy()` from inside an action both end in `deleteAlarm()` + `deleteAll()` and close the instance's sockets. The Agents SDK lifecycle tears down the same way: disable alarms, dispose live resources, `deleteAll()`. Choices that mattered:
+- **No storage left behind.** The runtime used to create its tables in the constructor, so any touch (a delete of an unknown key, a failed call) left an object with empty tables. Tables are now created on first real use, so a deleted or never-used key has no storage (tested through the Local Explorer).
+- **Ordered with actions.** A delete is queued like an action. `ctx.destroy()` replaces the commit, so a throwing action deletes nothing, and queued sends still go out first. Due schedules check whether the instance was deleted before they run, so a deleted instance can't come back through its own alarm. A scheduled action that was cancelled by an earlier one in the same alarm no longer runs either; that was a bug before.
+- **`onClose` doesn't run** for sockets closed by a delete, because it would recreate the instance.
+- **Local quirk:** in `wrangler dev`, a close the server starts only finishes the handshake for the socket whose event is running. Other sockets, and every socket when the delete comes from an RPC call, stay `CLOSING` on the client. Hook-initiated `conn.close()` has the same limit. This needs checking in production (see §1).
+
+**Logs.** Each invocation, migration and delete writes one flat JSON object with `console.log` or `console.error`. `observability` is already on in the generated config, so Workers Logs can filter by `actor`, `key`, `method`, `ok`, `error.kind` and `codeVersion` without a production Explorer. The object never includes arguments, state or return values. A scheduled call dropped after its last attempt is now visible (`scheduleDropped: true`); before, it disappeared silently in production. The default is every call in production and failures only in dev (`ACTORS_LOGS`). Not verified: how Workers Logs indexes these fields on a real account.
+
 ## 4. Answers to the PRD's open questions
 
 1. **Functional or class API?** Functional `actor({ state, actions })`. TypeScript infers state from the initial value and gives every action a typed `ctx`. Caller types come from the definition without codegen. One wrinkle: empty arrays need `[] as Message[]`.
@@ -175,6 +186,7 @@ Not solved: `any`/`unknown` and changes in meaning aren't caught; a production v
 ## 5. Known limitations
 
 - Re-entrant calls (an actor awaiting itself, or a cycle) deadlock until the platform times out.
+- `Actor.delete` is irreversible and has no soft-delete or undo. Like `get()`, it trusts the key the Worker passes.
 - Side effects inside actions are not rolled back. The semantics doc says so, but the API does not prevent it.
 - The Explorer needs Wrangler's Local Explorer API (Wrangler 4.163 was verified; it is on unless `X_LOCAL_EXPLORER=false`). Without it, the Explorer shows an error naming the fix.
 - `redact` hides values in the Actor Explorer and `actors inspect`. Wrangler's own `/cdn-cgi/local/explorer` API still exposes raw local storage to anyone who can reach the dev server.

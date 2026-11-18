@@ -30,7 +30,7 @@ Defines an actor type. Export the result from any file under `src/` as `export c
 
 #### Returns
 
-An `Actor` with `get()` and `connect()`.
+An `Actor` with `get()`, `connect()` and `delete()`.
 
 #### Example
 
@@ -103,6 +103,41 @@ export default {
   },
 };
 ```
+
+## `delete`
+
+`Actor.delete(key: string)`: `Promise<boolean>`
+
+Permanently deletes the instance with this key.
+
+The following are deleted:
+- its state
+- its pending schedules and alarm
+- its invocation log
+- every table it created through `ctx.sql`
+
+Its WebSockets are closed with code `1000`, and `onClose` does not run for them. The delete is queued like an action: it waits for the running action, then runs before the calls queued behind it. Calls after it go to a new instance that starts from the initial state, and `onCreate` runs again.
+
+#### Parameters
+
+- `key` `string`
+  - The instance to delete.
+
+#### Returns
+
+`true` if the instance existed, `false` if it didn't. Deleting a key that was never used creates nothing.
+
+#### Example
+
+```ts
+// After you have authenticated the request and checked the user may close this account:
+await SupportAgent.delete(customerId);
+```
+
+To have an instance delete itself, for example when it expires, call [`ctx.destroy()`](action-context.md#destroy) from one of its actions.
+
+> [!NOTE]
+> The delete is permanent. The Worker can call it for any key, so the authorization check you do before calling `get()` applies here too.
 
 ## Related resources
 

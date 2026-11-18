@@ -13,6 +13,7 @@ export const Room = actor({
       const text = String(message);
       ctx.state.log.push(`${conn.data.user}:${text}`);
       ctx.broadcast({ from: conn.data.user, text });
+      if (text === "destroy") ctx.destroy(); // deletes the room once this hook returns
       if (text === "fail") throw new Error("rolled back after broadcast");
     },
     onClose(ctx, conn) {
@@ -23,5 +24,9 @@ export const Room = actor({
     log: ({ state }) => state.log,
     online: (ctx) => ctx.connections().map((c) => c.data.user).sort(),
     shout: (ctx, text: string) => ctx.broadcast({ from: "server", text }),
+    closeRoom: (ctx) => {
+      ctx.broadcast({ closing: true }); // delivered before the sockets close
+      ctx.destroy();
+    },
   },
 });

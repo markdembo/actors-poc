@@ -92,6 +92,33 @@ Queues a message to every open connection, or to a subset. It is sent only if th
 
 The open WebSocket connections to this instance: `{ id, data, connectedAt }`. During `onConnect`, the new connection is not listed yet. During `onClose`, the closing one is not listed anymore.
 
+## Lifecycle
+
+### `destroy`
+
+`destroy(): void`
+
+Deletes this instance when the current action returns. Nothing is saved. In order:
+1. Queued messages are sent.
+2. State, schedules, the invocation log and the instance's `ctx.sql` tables are deleted.
+3. Its WebSockets are closed with code `1000` (`onClose` does not run).
+
+If the action throws, nothing is deleted. The return value still goes to the caller. The next call to this key starts a new instance. This is the same as [`Actor.delete(key)`](actor.md#delete), but from inside the actor.
+
+#### Example
+
+```ts
+export const Session = actor({
+  state: { user: "" },
+  onCreate: (ctx) => {
+    ctx.schedule(30 * 24 * 3600, "expire"); // delete after 30 days
+  },
+  actions: {
+    expire: (ctx) => ctx.destroy(),
+  },
+});
+```
+
 ## Escape hatches
 
 ### `env`

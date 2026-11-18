@@ -78,6 +78,7 @@ const localObjects = async () => {
   const ns = (await (await fetch(le)).json()).result.find((n) => n.class === "ActorHost").id;
   return (await (await fetch(`${le}/${ns}/objects`)).json()).result.map((o) => o.name);
 };
+const del = async (key, which = "") => (await (await fetch(`${base}/delete/${encodeURIComponent(key)}${which}`)).json()).value;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const run = Date.now().toString(36); // unique keys per run
 
@@ -229,6 +230,61 @@ async function main() {
     assert.equal((await call(key, "get")).value.n, 0, "a fresh instance starts from initial state");
   });
 
+  await test("delete: Actor.delete removes state, schedules and log; the key then starts fresh", async () => {
+    const key = `del-${run}`;
+    await call(key, "add", [4]);
+    await call(key, "scheduleAdd", [1, 9]);
+    assert.equal((await api(`/actors/Probe/${key}`)).schedules.length, 1);
+    assert.equal(await del(key), true);
+    assert.equal(await del(key), false, "deleting again: it no longer exists");
+    const d = await api(`/actors/Probe/${key}`);
+    assert.equal(d.exists, false);
+    assert.ok(!(await api("/instances")).some((i) => i.key === key));
+    const le = `${base}/cdn-cgi/local/explorer/api/workers/durable_objects/namespaces`;
+    const ns = (await (await fetch(le)).json()).result.find((n) => n.class === "ActorHost").id;
+    const q = await (await fetch(`${le}/${ns}/query`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ durable_object_name: `Probe:${key}`, queries: [{ sql: "SELECT name FROM sqlite_master WHERE type = 'table'" }] }),
+    })).json();
+    assert.ok(Array.isArray(q.result), `local explorer query failed: ${JSON.stringify(q).slice(0, 300)}`);
+    const tables = JSON.stringify(q).match(/"_actor_\w+"/g) ?? [];
+    assert.deepEqual(tables, [], `actor tables left behind: ${JSON.stringify(q).slice(0, 300)}`);
+    await sleep(1500);
+    assert.equal((await api(`/actors/Probe/${key}`)).exists, false, "the deleted schedule did not run");
+    const s = (await call(key, "get")).value;
+    assert.equal(s.n, 0);
+    assert.equal(s.created, true, "a new instance runs onCreate again");
+  });
+
+  await test("delete: deleting a key that was never used returns false and creates nothing", async () => {
+    const key = `del-ghost-${run}`;
+    assert.equal(await del(key), false);
+    assert.equal((await api(`/actors/Probe/${key}`)).exists, false);
+    assert.ok(!(await api("/instances")).some((i) => i.key === key));
+  });
+
+  await test("delete: ctx.destroy() deletes when the action returns; a throwing action deletes nothing", async () => {
+    const key = `destroy-${run}`;
+    await call(key, "add", [2]);
+    const r = await call(key, "destroyThenThrow");
+    assert.equal(r.ok, false);
+    assert.equal((await call(key, "get")).value.n, 2);
+    assert.deepEqual(await call(key, "expire"), { ok: true, value: "bye" });
+    assert.equal((await api(`/actors/Probe/${key}`)).exists, false);
+  });
+
+  await test("delete: a scheduled action can destroy its instance (expiry)", async () => {
+    const key = `ttl-${run}`;
+    await call(key, "scheduleExpire", [1]);
+    let d;
+    for (let i = 0; i < 40; i++) {
+      d = await api(`/actors/Probe/${key}`);
+      if (!d.exists) break;
+      await sleep(150);
+    }
+    assert.equal(d.exists, false);
+  });
+
   await test("FR8: a raw Durable Object class is wired up with zero config and called via durable()", async () => {
     const cfg = readFileSync(join(fixture, "wrangler.jsonc"), "utf8");
     assert.match(cfg, /"name": "LEDGER",\s*"class_name": "Ledger"/);
@@ -267,8 +323,10 @@ async function main() {
     new Promise((resolve, reject) => {
       const ws = new WebSocket(`ws://localhost:${PORT}/ws/${room}?user=${user}`);
       const got = [];
+      const conn = { ws, got, closed: null };
       ws.onmessage = (e) => got.push(JSON.parse(e.data));
-      ws.onopen = () => resolve({ ws, got });
+      ws.onclose = (e) => (conn.closed = { code: e.code, reason: e.reason });
+      ws.onopen = () => resolve(conn);
       ws.onerror = () => reject(new Error(`could not connect ${user}`));
     });
   const roomCall = async (room, method, args = []) =>
@@ -340,6 +398,46 @@ async function main() {
     assert.doesNotMatch(out, /mallory/);
   });
 
+  await test("WS: ctx.destroy() in a hook sends queued messages, closes every socket and skips onClose", async () => {
+    const r2 = `room-del-${run}`;
+    const a = await wsOpen(r2, "ada");
+    const b = await wsOpen(r2, "bob");
+    await sleep(200);
+    a.ws.send("destroy");
+    await sleep(400);
+    assert.deepEqual(b.got.at(-1), { from: "ada", text: "destroy" }, "sends queued by the hook go out first");
+    assert.deepEqual(a.closed, { code: 1000, reason: "Actor instance deleted" });
+    // Local wrangler dev only finishes the closing handshake for the socket whose event is running; the
+    // others (and every socket when the close starts in an RPC call) stay CLOSING. Check the server started it.
+    assert.notEqual(b.ws.readyState, WebSocket.OPEN);
+    assert.equal((await api(`/actors/Room/${r2}`)).exists, false, "onClose must not recreate the instance");
+  });
+
+  await test("WS: Room.delete() and ctx.destroy() in an action close sockets, after queued sends", async () => {
+    const r3 = `room-del2-${run}`;
+    const a = await wsOpen(r3, "ada");
+    await sleep(200);
+    assert.equal(await roomCall(r3, "closeRoom"), undefined);
+    await sleep(400);
+    assert.deepEqual(a.got.at(-1), { closing: true });
+    // See above: in local dev these sockets stay CLOSING rather than CLOSED.
+    assert.notEqual(a.ws.readyState, WebSocket.OPEN);
+    assert.equal((await api(`/actors/Room/${r3}`)).exists, false);
+    const b = await wsOpen(r3, "bob");
+    await sleep(200);
+    assert.equal(await del(r3, "/room"), true);
+    await sleep(300);
+    assert.notEqual(b.ws.readyState, WebSocket.OPEN);
+    assert.equal((await api(`/actors/Room/${r3}`)).exists, false);
+  });
+
+  await test("logs: in dev only failures are logged, as one structured line each", async () => {
+    const out = server.log();
+    assert.match(out, /actor\.invoke/);
+    assert.match(out, /Probe\("k-[^"]+"\)\.addThenThrow failed \(action\): boom/);
+    assert.doesNotMatch(out, /\.add ok in/, "successful calls are not logged in dev");
+  });
+
   await test("FR7: failed invocation is traceable to actor, method, error and logs", async () => {
     const d = await api(`/actors/Probe/${k}`);
     const failed = d.invocations.find((i) => i.method === "addThenThrow");
@@ -396,6 +494,19 @@ async function main() {
     assert.equal((await call(k, "get")).value.n, 15);
     assert.equal((await call(`prod-${run}`, "add", [2])).value, 2);
     assert.equal((await (await fetch(`${base}/ledger/acct-${run}/total`)).json()).value, 12, "raw DO state survives restart");
+  });
+
+  await test("logs: production logs every call, migration and delete as one structured line", async () => {
+    await call(`prod-err-${run}`, "addThenThrow");
+    await del(`prod-del-${run}`);
+    await sleep(300);
+    const out = server.log();
+    assert.match(out, new RegExp(`Probe\\("prod-${run}"\\)\\.add ok in \\d+ms`));
+    assert.match(out, new RegExp(`Probe\\("prod-err-${run}"\\)\\.addThenThrow failed \\(action\\): boom`));
+    assert.match(out, new RegExp(`Probe\\("prod-del-${run}"\\)\\.delete ok`));
+    assert.match(out, /actor\.delete/);
+    assert.match(out, /trigger/);
+    assert.ok(!out.includes("tok_live_123"), "arguments are never logged");
   });
 
   await stop(server);

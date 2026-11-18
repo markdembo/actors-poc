@@ -35,6 +35,8 @@ const n = await Cart.get(userId).add("sku-1", 2); // typed; returns Promise<numb
 - Changing the shape of state: append to `migrations: [(old, { sql }) => newState, ...]`. Never edit, reorder or remove a shipped migration; `state` is always the latest shape. Migrations are synchronous (no await/fetch).
 - Changing actions: add new ones, add optional arguments, widen argument types. Don't remove an action, change or narrow an argument's type, add a required argument, or return new kinds of values until the previous version is gone (`actors deploy` checks the TypeScript types and refuses otherwise; `--allow-breaking` overrides).
 - Delay work: `ctx.schedule(seconds, "actionName", ...args)` (transactional, at least once).
+- Delete an instance (state, schedules, its ctx.sql tables; closes its sockets): `await Cart.delete(key)` from the Worker, or `ctx.destroy()` inside an action (takes effect when it returns; e.g. a scheduled `expire`). The next call starts fresh.
+- Production debugging: every call writes one structured log line (actor, key, method, ok, error.kind, durationMs) to Workers Logs. `ACTORS_LOGS=all|errors|off`.
 - Log for debugging: `ctx.log(...)`. Hide secrets from dev tools: `redact: { state: ["token"], args: ["setToken"] }`.
 - Keys are addresses, not auth. Derive them from an authenticated identity.
 

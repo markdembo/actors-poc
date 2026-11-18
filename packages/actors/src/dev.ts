@@ -202,7 +202,7 @@ async function listInstances(le: LocalExplorer, registry: Record<string, AnyActo
     try {
       r = (await le.query(o.name!, [{ sql: STATS_SQL }]))[0][0];
     } catch {
-      r = undefined; // not created by this runtime (e.g. tables missing): list it without stats
+      return null; // no actor tables: deleted (Actor.delete, ctx.destroy) or never written
     }
     const num = (v: SqlStorageValue | undefined) => (v == null ? null : Number(v));
     const first = [num(r?.created_at), num(r?.first_ts)].filter((x): x is number => x !== null);
@@ -237,21 +237,26 @@ async function inspect(
   const note =
     "instanceStartedAt changes when the runtime evicts or restarts this instance. " +
     "Eviction and placement events are not otherwise observable from inside the runtime.";
-  const known = (await le.objects()).some((o) => o.name === name);
-  if (!known) {
-    // Don't query: that would create an empty object for a key that was never used.
-    return {
-      exists: false, actor, key, latestSchema: latestSchema(registry, actor), invocations: [], schedules: [],
-      storage: { databaseSizeBytes: 0, stateBytes: 0 }, lifecycle: null,
-      source: "wrangler-local-explorer",
-    };
-  }
+  const known = (await le.objects()).some((o) => o.name === name && o.hasStoredData !== false);
+  const missing = (): InspectResult => ({
+    exists: false, actor, key, latestSchema: latestSchema(registry, actor), invocations: [], schedules: [],
+    storage: { databaseSizeBytes: 0, stateBytes: 0 }, lifecycle: null,
+    source: "wrangler-local-explorer",
+  });
+  // Don't query an unknown or deleted object: that would create it (or bring it back) just to look at it.
+  if (!known) return missing();
 
-  const [[stateRow], logRows, scheduleRows] = await le.query(name, [
-    { sql: "SELECT state, version, schema, created_at, updated_at, length(CAST(state AS BLOB)) AS bytes FROM _actor_state" },
-    { sql: "SELECT * FROM _actor_log ORDER BY id DESC LIMIT 50" },
-    { sql: "SELECT id, at, action, args, attempts FROM _actor_schedule ORDER BY at" },
-  ]);
+  let rows: Row[][];
+  try {
+    rows = await le.query(name, [
+      { sql: "SELECT state, version, schema, created_at, updated_at, length(CAST(state AS BLOB)) AS bytes FROM _actor_state" },
+      { sql: "SELECT * FROM _actor_log ORDER BY id DESC LIMIT 50" },
+      { sql: "SELECT id, at, action, args, attempts FROM _actor_schedule ORDER BY at" },
+    ]);
+  } catch {
+    return missing(); // no actor tables: deleted, or never written
+  }
+  const [[stateRow], logRows, scheduleRows] = rows;
   const runtime = await stub.actorRuntime();
 
   const redact = (registry[actor]?.__config.redact?.state ?? []) as string[];
@@ -439,8 +444,8 @@ async function explorer(
       return json(await inspect(le, s, registry, type, key));
     }
     if (!op && req.method === "DELETE") {
-      await s.actorWipe();
-      return json({ ok: true });
+      const result: InvokeResult = await s.actorDelete({ actor: type, key, source: "explorer" });
+      return json(result, result.ok ? 200 : 409);
     }
     if (op === "invoke" && req.method === "POST") {
       const body = (await req.json().catch(() => null)) as { method?: unknown; args?: unknown } | null;

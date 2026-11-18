@@ -36,5 +36,14 @@ export const Probe = actor({
       state.secret = s;
     },
     get: ({ state }) => state,
+    expire: (ctx) => {
+      ctx.destroy();
+      return "bye";
+    },
+    destroyThenThrow: (ctx) => {
+      ctx.destroy();
+      throw new Error("nothing is deleted");
+    },
+    scheduleExpire: (ctx, seconds: number) => ctx.schedule(seconds, "expire"),
   },
 });

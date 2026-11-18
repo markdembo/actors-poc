@@ -68,6 +68,34 @@ Things that are **not** inside the transaction:
 - **Hibernation.** Sockets are accepted through the Hibernation API: an idle instance can be evicted from memory while its sockets stay open, and an incoming message wakes it. Connection state lives on the sockets and in SQLite, not in memory, so nothing is lost on wake. Not tested here: forcing hibernation locally isn't possible.
 - **Throughput.** Every incoming message is one queued, transactional invocation, and a broadcast is one send per open socket. One instance tops out around Cloudflare's soft limit of 1,000 requests/s and its CPU budget. Very large rooms need the patterns in findings §3.8.
 
+## Deleting instances
+
+- `Actor.delete(key)` and `ctx.destroy()` delete everything the instance stores: state, schedules, the alarm, the invocation log and its `ctx.sql` tables. Nothing is left in storage.
+- **Ordered with actions.** `Actor.delete` is queued like an action. `ctx.destroy()` takes effect when its action returns, in place of the commit; if the action throws, nothing is deleted.
+- **After a delete,** the next call to the key starts a new instance from the initial state, and `onCreate` runs again. Scheduled calls that were due when the instance was deleted are dropped.
+- **WebSockets** are closed with code `1000` and reason `Actor instance deleted`, after any queued sends. `onClose` does not run for them, because it would recreate the instance. In local `wrangler dev` only the socket whose event is running finishes the closing handshake. Others, and every socket when the delete comes from an RPC call, stay `CLOSING` on the client until it times out. This was not checked in production.
+
+## Logs
+
+Each invocation, migration and delete writes one structured log line (`console.log` for successes, `console.error` for failures), so Workers Logs can filter by actor, key and outcome without the Explorer:
+
+```json
+{
+  "message": "SupportAgent(\"acme\").chat failed (action): boom",
+  "event": "actor.invoke",
+  "actor": "SupportAgent", "key": "acme", "method": "chat", "trigger": "rpc",
+  "invocation": "3f9a1c2e", "durationMs": 812, "ok": false,
+  "stateVersion": 14, "schema": 2, "codeVersion": "v7", "callerVersion": "v7",
+  "error": { "kind": "action", "name": "SyntaxError", "message": "boom", "code": "BAD_TOOL", "stack": "..." }
+}
+```
+
+- `event` is `actor.invoke`, `actor.migrate` or `actor.delete`. `trigger` is `rpc`, `schedule`, `websocket`, `explorer` or `migration`.
+- Successful calls also have `changed`. Calls run by a schedule have `scheduleId`. A failed scheduled call has `scheduleDropped: true` on its last attempt, so a dropped schedule is visible in production. `ctx.destroy()` sets `deleted: true`.
+- `invocation` matches the `#id` in `ctx.log` lines and the Explorer's invocation log.
+- Arguments, state and return values are never logged. Keys and error messages are, so don't put secrets in either.
+- Defaults: every call in production, failures only in `actors dev`. Override with the `ACTORS_LOGS` var (`all` | `errors` | `off`).
+
 ## Restarts, eviction, redeploys
 
 All state lives in SQLite. In-memory state is only a cache of the committed document. After an eviction, crash or redeploy, the next call reloads from storage. Tests cover state and invocation history surviving a full runtime restart. `lifecycle.instanceStartedAt` in `inspect` changes when the instance was recreated. The runtime does not expose other eviction or placement events, and the PoC does not pretend it does.

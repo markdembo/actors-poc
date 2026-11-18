@@ -37,8 +37,11 @@ The binding name `ACTORS` and the class name `ActorHost` are reserved. Actors re
 | Variable | Values | Default |
 |---|---|---|
 | `ACTORS_INSTRUMENTATION` | `all`, `errors`, `off` | `all` in `actors dev`, `errors` in production |
+| `ACTORS_LOGS` | `all`, `errors`, `off` | `errors` in `actors dev`, `all` in production |
 
-Set it in `vars` in `wrangler.jsonc`. `errors` records only failed invocations in the per-instance log, which keeps production writes down. `off` records nothing.
+Set them in `vars` in `wrangler.jsonc`.
+- `ACTORS_INSTRUMENTATION` controls the per-instance invocation log in SQLite, which the Explorer reads. `errors` records only failed invocations, which keeps production writes down. `off` records nothing.
+- `ACTORS_LOGS` controls the structured log line written for each invocation, migration and delete, which Workers Logs collects (see [Logs](../semantics.md#logs)). It costs no storage writes.
 
 ## Development and production builds
 
@@ -48,6 +51,7 @@ Set it in `vars` in `wrangler.jsonc`. `errors` records only failed invocations i
 | Actor Explorer and `/__actors` routes | Included, localhost only | Not in the bundle |
 | Dev-only inspection RPCs | Enabled | Rejected |
 | Default instrumentation | `all`, with arguments | `errors`, no arguments |
+| Default structured logs | Failures only | Every call |
 
 ## Related resources
 

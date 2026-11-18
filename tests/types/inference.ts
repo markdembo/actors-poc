@@ -37,6 +37,12 @@ async function usage() {
   // Optional args follow the action's signature.
   await c.increment();
 
+  // Deleting an instance resolves to whether it existed; ctx.destroy() is on the context.
+  const existed = await Counter.delete("customer-123");
+  assert<Equal<typeof existed, boolean>>();
+  // @ts-expect-error delete takes a key
+  await Counter.delete();
+
   // @ts-expect-error invalid method name
   await c.decrement(1);
   // @ts-expect-error wrong argument type

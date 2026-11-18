@@ -30,10 +30,12 @@ import {
 export type InstrumentationLevel = "all" | "errors" | "off";
 
 export interface HostOptions {
-  /** Enables the dev-only RPCs (actorRuntime, actorWipe). The generated dev entry sets this; the deploy entry does not. */
+  /** Enables the dev-only RPC (actorRuntime). The generated dev entry sets this; the deploy entry does not. */
   dev?: boolean;
-  /** Default: "all" in dev, "errors" in production. Override with the ACTORS_INSTRUMENTATION var. */
+  /** What goes into the per-instance invocation log table. Default: "all" in dev, "errors" in production. Override with the ACTORS_INSTRUMENTATION var. */
   instrumentation?: InstrumentationLevel;
+  /** Which calls emit a structured log line (Workers Logs). Default: "all" in production, "errors" in dev. Override with the ACTORS_LOGS var. */
+  logs?: InstrumentationLevel;
 }
 
 const LOG_LIMIT = 100;
@@ -185,20 +187,24 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
     #queued = 0;
     #active: { method: string; since: number } | null = null;
     #row: StateRow | null | undefined; // undefined = not loaded yet
+    /** Tables are created on first use, not in the constructor, so touching an instance (or deleting one) leaves no storage behind. */
+    #tables = false;
+    /** Bumped when the instance is deleted, so work queued before the delete (due schedules) is dropped. */
+    #generation = 0;
     readonly #startedAt = Date.now();
     readonly #level: InstrumentationLevel;
+    readonly #logs: InstrumentationLevel;
     readonly #code: string;
 
     constructor(ctx: DurableObjectState, env: Record<string, unknown>) {
       super(ctx, env);
-      const lvl = env.ACTORS_INSTRUMENTATION;
-      this.#level =
-        lvl === "all" || lvl === "errors" || lvl === "off" ? lvl : (options.instrumentation ?? (dev ? "all" : "errors"));
+      this.#level = level(env.ACTORS_INSTRUMENTATION) ?? options.instrumentation ?? (dev ? "all" : "errors");
+      this.#logs = level(env.ACTORS_LOGS) ?? options.logs ?? (dev ? "errors" : "all");
       this.#code = codeVersion(env);
-      this.#ensureTables();
     }
 
     #ensureTables() {
+      if (this.#tables) return;
       const sql = this.ctx.storage.sql;
       sql.exec(`CREATE TABLE IF NOT EXISTS _actor_state (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -220,6 +226,7 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
         code_version: "TEXT",
         caller_version: "TEXT",
       });
+      this.#tables = true;
     }
 
     // ───────────────────────────── public RPC ─────────────────────────────
@@ -248,18 +255,28 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       };
     }
 
-    /** Dev only: delete all of this instance's storage. */
-    async actorWipe(): Promise<void> {
-      this.#requireDev();
-      await this.ctx.storage.deleteAlarm();
-      await this.ctx.storage.deleteAll();
-      this.#row = null;
-      this.#ensureTables();
-      for (const ws of this.ctx.getWebSockets()) {
-        try {
-          ws.close(1001, "Actor instance deleted");
-        } catch {}
-      }
+    /**
+     * Delete this instance (`Actor.delete(key)`, the Explorer's delete button). Queued like an action, so it
+     * waits for the running one. Returns `{ ok: true, value: existed }`.
+     */
+    async actorDelete(req: { actor: string; key: string; callerVersion?: string; source?: InvokeRequest["source"] }): Promise<InvokeResult> {
+      return this.#enqueue("delete", async () => {
+        const started = Date.now();
+        const entry: InvokeRequest = { ...req, method: "delete", args: [], source: req.source ?? "rpc" };
+        const row = this.#hasTables() ? this.#load() : null;
+        if (row && (row.actor !== req.actor || row.key !== req.key)) {
+          const error: SerializedError = {
+            name: "ActorError",
+            kind: "config",
+            message: `Identity mismatch: this instance belongs to ${row.actor}("${row.key}")`,
+          };
+          this.#emit("delete", entry, crypto.randomUUID().slice(0, 8), started, { ok: false, error });
+          return { ok: false, error };
+        }
+        await this.#wipe();
+        this.#emit("delete", entry, crypto.randomUUID().slice(0, 8), started, { ok: true, deleted: !!row });
+        return { ok: true, value: !!row };
+      });
     }
 
     // ───────────────────────────── WebSockets (hibernation API) ─────────────────────────────
@@ -371,18 +388,24 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
 
     /** Durable Object alarm: run due scheduled actions through the normal (queued, transactional) path. */
     override async alarm(): Promise<void> {
+      if (!this.#hasTables()) return; // deleted, or never created
       const row = this.#load();
       if (!row) return;
+      const gen = this.#generation;
       const due = this.ctx.storage.sql
         .exec(`SELECT id, action, args FROM _actor_schedule WHERE at <= ? ORDER BY at`, Date.now())
         .toArray();
       for (const s of due) {
-        await this.#enqueue(String(s.action), () =>
-          this.#run(
+        await this.#enqueue(String(s.action), async () => {
+          // Re-check when its turn comes: an earlier run may have cancelled it, or deleted the instance.
+          if (this.#generation !== gen) return;
+          if (!this.ctx.storage.sql.exec(`SELECT 1 FROM _actor_schedule WHERE id = ?`, s.id).toArray().length) return;
+          await this.#run(
             { actor: row.actor, key: row.key, method: String(s.action), args: JSON.parse(String(s.args)), source: "schedule" },
             String(s.id),
-          ),
-        );
+          );
+        });
+        if (this.#generation !== gen) return; // deleted: nothing left to run or re-arm
       }
       await this.#rearm();
     }
@@ -410,8 +433,37 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       return p;
     }
 
+    /** Whether this instance has its tables, without creating them. */
+    #hasTables(): boolean {
+      return (
+        this.#tables ||
+        this.ctx.storage.sql.exec(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_actor_state'`).toArray()
+          .length > 0
+      );
+    }
+
+    /**
+     * Close this instance's sockets, then delete its alarm and everything it stores (state, schedules, invocation
+     * log, its own ctx.sql tables). `onClose` does not run for those sockets: it would recreate the instance.
+     */
+    async #wipe() {
+      for (const ws of this.ctx.getWebSockets()) {
+        const a = attachmentOf(ws);
+        if (a) this.#closedIds.add(a.id);
+        try {
+          ws.close(1000, "Actor instance deleted");
+        } catch {}
+      }
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.deleteAll();
+      this.#row = undefined;
+      this.#tables = false;
+      this.#generation++;
+    }
+
     #load(): StateRow | null {
       if (this.#row !== undefined) return this.#row;
+      this.#ensureTables();
       const r = this.ctx.storage.sql.exec(`SELECT * FROM _actor_state WHERE id = 1`).toArray()[0];
       this.#row = r
         ? {
@@ -438,7 +490,10 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
 
       const fail = (error: SerializedError, changedKeys: string[] = []): InvokeResult => {
         this.#record(req, invocation, started, logs, false, false, changedKeys, row?.version ?? 0, row?.schema ?? 0, null, error);
-        if (scheduleId) this.#scheduleFailed(scheduleId, error.kind === "version");
+        const dropped = scheduleId ? this.#scheduleFailed(scheduleId, error.kind === "version") : false;
+        this.#emit("invoke", req, invocation, started, {
+          ok: false, error, stateVersion: row?.version, schema: row?.schema, ...(scheduleId && { scheduleId, scheduleDropped: dropped }),
+        });
         return { ok: false, error };
       };
 
@@ -505,7 +560,8 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
         return fail(serializeError(err, "action"));
       }
 
-      const ctx = this.#context(def, req, invocation, draft, logs, scheduleOps, outbox, hook?.excludeId);
+      const control = { destroy: false };
+      const ctx = this.#context(def, req, invocation, draft, logs, scheduleOps, outbox, hook?.excludeId, control);
 
       // 2. Run onCreate (first call only) and the action against the draft.
       let value: unknown;
@@ -517,19 +573,22 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       }
 
       // 3. Validate the new state and the return value before anything is written.
+      //    A destroyed instance keeps no state, so only the return value is checked.
       const next = ctx.state;
-      let json: string;
+      let json = "";
       try {
-        const problem = findJsonProblem(next);
-        if (problem) throw new ActorError(`State validation failed: ${problem}.`, { kind: "validation" });
-        def.__config.validate?.(next);
-        json = JSON.stringify(next);
-        const bytes = byteLength(json);
-        if (bytes > MAX_STATE_BYTES) {
-          throw new ActorError(
-            `State is ${bytes} bytes; the limit is ${MAX_STATE_BYTES}. Move large or growing data into ctx.sql tables.`,
-            { kind: "validation" },
-          );
+        if (!control.destroy) {
+          const problem = findJsonProblem(next);
+          if (problem) throw new ActorError(`State validation failed: ${problem}.`, { kind: "validation" });
+          def.__config.validate?.(next);
+          json = JSON.stringify(next);
+          const bytes = byteLength(json);
+          if (bytes > MAX_STATE_BYTES) {
+            throw new ActorError(
+              `State is ${bytes} bytes; the limit is ${MAX_STATE_BYTES}. Move large or growing data into ctx.sql tables.`,
+              { kind: "validation" },
+            );
+          }
         }
         try {
           structuredClone(value);
@@ -541,6 +600,15 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
         }
       } catch (err) {
         return fail(serializeError(err, "validation"));
+      }
+
+      // ctx.destroy(): instead of committing, deliver queued messages, then delete everything.
+      if (control.destroy) {
+        hook?.afterCommit?.();
+        this.#flush(outbox);
+        await this.#wipe();
+        this.#emit("invoke", req, invocation, started, { ok: true, deleted: true, ...(scheduleId && { scheduleId }) });
+        return { ok: true, value };
       }
 
       // 4. Commit atomically: state + schedules + log row in one SQLite transaction.
@@ -568,6 +636,11 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       hook?.afterCommit?.();
       this.#flush(outbox); // only now: rolled-back invocations never reach clients
       if (scheduleOps.length > 0) await this.#rearm();
+      this.#emit("invoke", req, invocation, started, {
+        ok: true, changed, stateVersion: version, schema,
+        ...(scheduleOps.length > 0 && { schedulesAdded: scheduleOps.filter((o) => o.op === "add").length }),
+        ...(scheduleId && { scheduleId }),
+      });
       return { ok: true, value };
     }
 
@@ -619,6 +692,9 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
           return r;
         });
         this.#row = next;
+        this.#emit("migrate", entry, invocation, started, {
+          ok: true, changed: true, stateVersion: next.version, schema: latest, migratedFrom: row.schema,
+        });
         return { ok: true, row: next };
       } catch (err) {
         const e = serializeError(err, "version");
@@ -631,6 +707,9 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
             "Nothing was changed; the migration runs again on the next call. Fix it by deploying a corrected migration.",
         };
         this.#record(entry, invocation, started, [], false, false, [], row.version, row.schema, row.schema, error);
+        this.#emit("migrate", entry, invocation, started, {
+          ok: false, error, stateVersion: row.version, schema: row.schema, migratedFrom: row.schema,
+        });
         return { ok: false, error };
       }
     }
@@ -644,6 +723,7 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       scheduleOps: ScheduleOp[],
       outbox: Outgoing[],
       excludeId: string | undefined,
+      control: { destroy: boolean },
     ): ActionContext<any> {
       const self = this;
       const tag = `[${req.actor}("${req.key}") #${invocation}]`;
@@ -678,6 +758,9 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
         },
         connections(): ConnectionInfo[] {
           return self.#attachments(excludeId).map((a) => ({ id: a.id, data: a.data, connectedAt: a.at }));
+        },
+        destroy() {
+          control.destroy = true;
         },
         get [Symbol.toStringTag]() {
           return `ActionContext ${tag} on ${self.ctx.id}`;
@@ -714,21 +797,73 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       sql.exec(`DELETE FROM _actor_log WHERE id <= (SELECT MAX(id) FROM _actor_log) - ?`, LOG_LIMIT);
     }
 
-    #scheduleFailed(id: string, versionMismatch = false) {
+    /** Retry later, or drop it after the last attempt. Returns true when it was dropped. */
+    #scheduleFailed(id: string, versionMismatch = false): boolean {
       const sql = this.ctx.storage.sql;
       const r = sql.exec(`SELECT attempts FROM _actor_schedule WHERE id = ?`, id).toArray()[0];
-      if (!r) return;
+      if (!r) return false;
       if (versionMismatch) {
         // Wrong code version for this state or action (e.g. after a rollback): wait for a deploy, don't use up attempts.
         sql.exec(`UPDATE _actor_schedule SET at = ? WHERE id = ?`, Date.now() + VERSION_RETRY_MS, id);
-        return;
+        return false;
       }
       const attempts = Number(r.attempts) + 1;
       if (attempts >= MAX_SCHEDULE_ATTEMPTS) {
         sql.exec(`DELETE FROM _actor_schedule WHERE id = ?`, id);
-      } else {
-        sql.exec(`UPDATE _actor_schedule SET attempts = ?, at = ? WHERE id = ?`, attempts, Date.now() + 2 ** attempts * 1000, id);
+        return true;
       }
+      sql.exec(`UPDATE _actor_schedule SET attempts = ?, at = ? WHERE id = ?`, attempts, Date.now() + 2 ** attempts * 1000, id);
+      return false;
+    }
+
+    /**
+     * One structured log line per invocation, migration and delete, for Workers Logs (`observability` is on in
+     * the generated config). Fields are flat so they can be filtered on: actor, key, method, ok, error.kind…
+     * Arguments and state are never logged. Failures go to console.error.
+     */
+    #emit(
+      event: "invoke" | "migrate" | "delete",
+      req: InvokeRequest,
+      invocation: string,
+      started: number,
+      outcome: {
+        ok: boolean;
+        error?: SerializedError;
+        changed?: boolean;
+        stateVersion?: number;
+        schema?: number;
+        migratedFrom?: number;
+        deleted?: boolean;
+        scheduleId?: string;
+        scheduleDropped?: boolean;
+        schedulesAdded?: number;
+      },
+    ) {
+      if (this.#logs === "off" || (this.#logs === "errors" && outcome.ok)) return;
+      const durationMs = Date.now() - started;
+      const { error, ...rest } = outcome;
+      const what = `${req.actor}("${req.key}").${req.method}`;
+      const line = {
+        message: outcome.ok
+          ? `${what} ok in ${durationMs}ms${outcome.deleted ? " (instance deleted)" : ""}`
+          : `${what} failed (${error?.kind}): ${error?.message}${outcome.scheduleDropped ? " — scheduled call dropped after the last attempt" : ""}`,
+        event: `actor.${event}`,
+        actor: req.actor,
+        key: req.key,
+        method: req.method,
+        trigger: req.source,
+        invocation,
+        durationMs,
+        ...rest,
+        codeVersion: this.#code,
+        ...(req.callerVersion && { callerVersion: req.callerVersion }),
+        ...(error && {
+          error: { kind: error.kind, name: error.name, message: error.message, code: error.code, stack: error.stack && truncate(error.stack, 4_000) },
+        }),
+      };
+      try {
+        (outcome.ok ? console.log : console.error)(line);
+      } catch {}
     }
 
     async #rearm() {
@@ -738,6 +873,10 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       else await this.ctx.storage.setAlarm(at);
     }
   };
+}
+
+function level(v: unknown): InstrumentationLevel | undefined {
+  return v === "all" || v === "errors" || v === "off" ? v : undefined;
 }
 
 /** Add columns that don't exist yet (tables created by an older runtime). */
