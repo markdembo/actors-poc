@@ -31,7 +31,7 @@ const n = await Cart.get(userId).add("sku-1", 2); // typed; returns Promise<numb
 - State must be plain JSON: no Date, Map, Set, class instances or undefined in arrays. Store dates as ISO strings or epoch ms. Max 2 MB; put bigger data in `ctx.sql`.
 - Actions on one instance run one at a time. Never await a call to the same actor from inside its own action (deadlock).
 - External side effects (fetch, other actors, `ctx.sql` writes) are not rolled back.
-- Calls are not retried. Catch `ActorError` and branch on `err.kind`: "action" | "validation" | "config" | "transport" | "timeout" | "version". `err.code` carries a `code` you set on a thrown error.
+- The runtime retries calls that never reached the actor and never runs an action twice; Actors adds no retries. Catch `ActorError` and branch on `err.kind`: "action" | "validation" | "config" | "transport" | "timeout" | "version". `err.code` carries a `code` you set on a thrown error.
 - Changing the shape of state: append to `migrations: [(old, { sql }) => newState, ...]`. Never edit, reorder or remove a shipped migration; `state` is always the latest shape. Migrations are synchronous (no await/fetch).
 - Changing actions: add new ones, add optional arguments, widen argument types. Don't remove an action, change or narrow an argument's type, add a required argument, or return new kinds of values until the previous version is gone (`actors deploy` checks the TypeScript types and refuses otherwise; `--allow-breaking` overrides).
 - Delay work: `ctx.schedule(seconds, "actionName", ...args)` (transactional, at least once).

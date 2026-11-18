@@ -16,7 +16,8 @@
  *  - Each action works on a private draft of the state. When it returns, the draft is
  *    validated and committed atomically. When it throws, the draft is discarded.
  *  - External side effects (fetch, other actors, raw ctx.sql writes) are NOT rolled back.
- *  - Calls are never retried automatically.
+ *  - Actors adds no retries. The Workers runtime retries calls that never reached the
+ *    instance, and never runs an action twice.
  */
 import { env as workerEnv } from "cloudflare:workers";
 import {
@@ -363,7 +364,7 @@ async function invoke(
     const e = err as Error & { retryable?: boolean; overloaded?: boolean };
     throw new ActorError(
       `Call to ${req.actor}("${req.key}").${req.method}() failed before a result was received: ${e?.message ?? e}. ` +
-        "The action may or may not have run; it was not retried.",
+        "The action may or may not have run. Any runtime retries are done; Actors did not retry it.",
       { kind: "transport", ...where, retryable: !!e?.retryable && !e?.overloaded, cause: err },
     );
   }

@@ -40,7 +40,8 @@ Things that are **not** inside the transaction:
 
 ## Calls, errors, retries
 
-- Calls are **never retried automatically**. Retrying a non-idempotent action (such as `increment`) can apply it twice.
+- The Workers runtime retries a call that fails before it reaches the actor: up to 4 retries, none starting more than 10 seconds after the call. It never runs an action twice. If it gives up, or the connection drops after the actor received the call, you get a `transport` error and the outcome is unknown. See [Durable Objects automatic retries](https://developers.cloudflare.com/durable-objects/best-practices/automatic-retries/).
+- Actors does not retry on top of that. If you retry yourself, retry once or twice at most, and only idempotent or deduplicated actions: retrying a non-idempotent action (such as `increment`) can apply it twice.
 - Every failure surfaces as an `ActorError` with a `kind`:
 
 | kind | Meaning | Did the action's state change commit? |

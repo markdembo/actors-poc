@@ -16,7 +16,7 @@ Every failed call through an actor reference rejects with an `ActorError`.
 | `actor`, `key`, `method` | `string \| undefined` | Which call failed. |
 | `remoteName` | `string \| undefined` | The original error's name inside the actor, such as `"TypeError"`. |
 | `remoteStack` | `string \| undefined` | The stack trace from inside the actor. |
-| `retryable` | `boolean` | `true` only when the platform marked a `transport` failure as safe to retry. |
+| `retryable` | `boolean` | `true` only when the platform marked a `transport` failure as safe to retry. The runtime has already retried such failures before you see them. |
 
 ## Kinds
 
@@ -25,7 +25,7 @@ Every failed call through an actor reference rejects with an `ActorError`.
 | `action` | The action threw | No | Expected failures: map to a 4xx and use `code` |
 | `validation` | The new state or return value was rejected | No | A bug: fix the action |
 | `config` | Unknown actor or action, missing binding, bad key | No (never ran) | A bug or a stale build: run `actors generate` |
-| `transport` | The call failed in transit, for example an overloaded instance | **Unknown** | Retry only if `retryable` and the action is idempotent |
+| `transport` | The call failed in transit, for example an overloaded instance | **Unknown** | Retry once or twice at most, only if `retryable` and the action is idempotent |
 | `timeout` | `timeoutMs` passed | **Unknown, usually yes** | Don't assume failure; read state or deduplicate |
 | `version` | Code and state, or caller and actor, are from different versions: the state was saved by newer code, a migration failed, or the caller asked for an action this version doesn't have | No | Deploy forward. Refer to [Changing actors safely](../best-practices/changing-actors.md) |
 

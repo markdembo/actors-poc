@@ -92,7 +92,7 @@
 <h4 id="returns-1"><a class="anchor" href="#returns-1" aria-label="Link to this section">#</a>Returns</h4>
 <p>An object with one async method per action. Each takes the action&#39;s arguments without <code>ctx</code>, and resolves to its return value:</p>
 <figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">const</span> <span class="hljs-attr">total</span>: <span class="hljs-built_in">number</span> = <span class="hljs-keyword">await</span> <span class="hljs-title class_">Counter</span>.<span class="hljs-title function_">get</span>(<span class="hljs-string">&quot;customer-123&quot;</span>).<span class="hljs-title function_">increment</span>(<span class="hljs-number">5</span>);</code></pre></figure>
-<p>Calls never retry automatically. Failures reject with an <a href="errors.html"><code>ActorError</code></a>.</p>
+<p>The Workers runtime retries a call that fails before it reaches the actor, and never runs an action twice. Actors adds no retries of its own. Failures reject with an <a href="errors.html"><code>ActorError</code></a>.</p>
 <h2 id="connect"><a class="anchor" href="#connect" aria-label="Link to this section">#</a><code>connect</code></h2>
 <p><code>Actor.connect(key: string, request: Request, options?: ConnectOptions&lt;C&gt;)</code>: <code>Promise&lt;Response&gt;</code></p>
 <p>Hands a WebSocket upgrade request to the instance with this key. Return the result from your <code>fetch</code> handler.</p>

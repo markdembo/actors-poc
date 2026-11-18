@@ -181,7 +181,7 @@ Scheduled actions are delivered at least once, so the check at the top matters.
 
 ### Deduplicate non-idempotent calls with request IDs
 
-Calls are never retried automatically. If you retry after a `transport` error or timeout, the first attempt may already have committed. Have callers send a request ID, and keep a bounded list of processed IDs.
+The runtime's own retries never run an action twice, but your retries can. If you retry after a `transport` error or timeout, the first attempt may already have committed. Have callers send a request ID, and keep a bounded list of processed IDs.
 
 ```ts
 // ✅
@@ -233,7 +233,7 @@ const items = await Cart.get(userId, { timeoutMs: 2_000 }).list();
 
 ### Retry only what is safe to retry
 
-Retry only when `err.kind === "transport" && err.retryable`, only for actions that are idempotent or deduplicated, and with backoff. Never retry `action` or `validation` errors: they fail the same way every time.
+Retry only when `err.kind === "transport" && err.retryable`, only for actions that are idempotent or deduplicated, and with backoff. Keep it to one or two attempts: the runtime has already retried the call, and each of your attempts can include up to 5 more. Never retry `action` or `validation` errors: they fail the same way every time.
 
 ## Security and privacy
 

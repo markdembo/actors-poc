@@ -133,7 +133,7 @@ state.<span class="hljs-property">lastSeenAt</span> = <span class="hljs-keyword"
 },</code></pre></figure>
 <p>Scheduled actions are delivered at least once, so the check at the top matters.</p>
 <h3 id="deduplicate-non-idempotent-calls-with-request-ids"><a class="anchor" href="#deduplicate-non-idempotent-calls-with-request-ids" aria-label="Link to this section">#</a>Deduplicate non-idempotent calls with request IDs</h3>
-<p>Calls are never retried automatically. If you retry after a <code>transport</code> error or timeout, the first attempt may already have committed. Have callers send a request ID, and keep a bounded list of processed IDs.</p>
+<p>The runtime&#39;s own retries never run an action twice, but your retries can. If you retry after a <code>transport</code> error or timeout, the first attempt may already have committed. Have callers send a request ID, and keep a bounded list of processed IDs.</p>
 <figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
 <span class="hljs-attr">charge</span>: <span class="hljs-function">(<span class="hljs-params">{ state }, <span class="hljs-attr">requestId</span>: <span class="hljs-built_in">string</span>, <span class="hljs-attr">cents</span>: <span class="hljs-built_in">number</span></span>) =&gt;</span> {
   <span class="hljs-keyword">if</span> (state.<span class="hljs-property">processed</span>.<span class="hljs-title function_">includes</span>(requestId)) <span class="hljs-keyword">return</span> state.<span class="hljs-property">balance</span>;
@@ -162,7 +162,7 @@ state.<span class="hljs-property">lastSeenAt</span> = <span class="hljs-keyword"
 <figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-comment">// ✅</span>
 <span class="hljs-keyword">const</span> items = <span class="hljs-keyword">await</span> <span class="hljs-title class_">Cart</span>.<span class="hljs-title function_">get</span>(userId, { <span class="hljs-attr">timeoutMs</span>: <span class="hljs-number">2_000</span> }).<span class="hljs-title function_">list</span>();</code></pre></figure>
 <h3 id="retry-only-what-is-safe-to-retry"><a class="anchor" href="#retry-only-what-is-safe-to-retry" aria-label="Link to this section">#</a>Retry only what is safe to retry</h3>
-<p>Retry only when <code>err.kind === &quot;transport&quot; &amp;&amp; err.retryable</code>, only for actions that are idempotent or deduplicated, and with backoff. Never retry <code>action</code> or <code>validation</code> errors: they fail the same way every time.</p>
+<p>Retry only when <code>err.kind === &quot;transport&quot; &amp;&amp; err.retryable</code>, only for actions that are idempotent or deduplicated, and with backoff. Keep it to one or two attempts: the runtime has already retried the call, and each of your attempts can include up to 5 more. Never retry <code>action</code> or <code>validation</code> errors: they fail the same way every time.</p>
 <h2 id="security-and-privacy"><a class="anchor" href="#security-and-privacy" aria-label="Link to this section">#</a>Security and privacy</h2>
 <ul>
 <li><strong>Keep the Actor Explorer local.</strong> It is only in <code>actors dev</code> builds and only answers on <code>localhost</code>. Don&#39;t proxy it anywhere.</li>

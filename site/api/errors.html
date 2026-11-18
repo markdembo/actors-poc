@@ -33,12 +33,12 @@
 <tr><td><code>actor</code>, <code>key</code>, <code>method</code></td><td><code>string | undefined</code></td><td>Which call failed.</td></tr>
 <tr><td><code>remoteName</code></td><td><code>string | undefined</code></td><td>The original error&#39;s name inside the actor, such as <code>&quot;TypeError&quot;</code>.</td></tr>
 <tr><td><code>remoteStack</code></td><td><code>string | undefined</code></td><td>The stack trace from inside the actor.</td></tr>
-<tr><td><code>retryable</code></td><td><code>boolean</code></td><td><code>true</code> only when the platform marked a <code>transport</code> failure as safe to retry.</td></tr></tbody></table></div>
+<tr><td><code>retryable</code></td><td><code>boolean</code></td><td><code>true</code> only when the platform marked a <code>transport</code> failure as safe to retry. The runtime has already retried such failures before you see them.</td></tr></tbody></table></div>
 <h2 id="kinds"><a class="anchor" href="#kinds" aria-label="Link to this section">#</a>Kinds</h2>
 <div class="table-wrap"><table><thead><tr><th><code>kind</code></th><th>Meaning</th><th>State committed?</th><th>What to do</th></tr></thead><tbody><tr><td><code>action</code></td><td>The action threw</td><td>No</td><td>Expected failures: map to a 4xx and use <code>code</code></td></tr>
 <tr><td><code>validation</code></td><td>The new state or return value was rejected</td><td>No</td><td>A bug: fix the action</td></tr>
 <tr><td><code>config</code></td><td>Unknown actor or action, missing binding, bad key</td><td>No (never ran)</td><td>A bug or a stale build: run <code>actors generate</code></td></tr>
-<tr><td><code>transport</code></td><td>The call failed in transit, for example an overloaded instance</td><td><strong>Unknown</strong></td><td>Retry only if <code>retryable</code> and the action is idempotent</td></tr>
+<tr><td><code>transport</code></td><td>The call failed in transit, for example an overloaded instance</td><td><strong>Unknown</strong></td><td>Retry once or twice at most, only if <code>retryable</code> and the action is idempotent</td></tr>
 <tr><td><code>timeout</code></td><td><code>timeoutMs</code> passed</td><td><strong>Unknown, usually yes</strong></td><td>Don&#39;t assume failure; read state or deduplicate</td></tr>
 <tr><td><code>version</code></td><td>Code and state, or caller and actor, are from different versions: the state was saved by newer code, a migration failed, or the caller asked for an action this version doesn&#39;t have</td><td>No</td><td>Deploy forward. Refer to <a href="../best-practices/changing-actors.html">Changing actors safely</a></td></tr></tbody></table></div>
 <h2 id="throwing-errors-with-a-code"><a class="anchor" href="#throwing-errors-with-a-code" aria-label="Link to this section">#</a>Throwing errors with a code</h2>

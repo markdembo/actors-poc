@@ -67,7 +67,7 @@ An object with one async method per action. Each takes the action's arguments wi
 const total: number = await Counter.get("customer-123").increment(5);
 ```
 
-Calls never retry automatically. Failures reject with an [`ActorError`](errors.md).
+The Workers runtime retries a call that fails before it reaches the actor, and never runs an action twice. Actors adds no retries of its own. Failures reject with an [`ActorError`](errors.md).
 
 ## `connect`
 

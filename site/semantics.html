@@ -59,7 +59,8 @@
 </ul>
 <h2 id="calls-errors-retries"><a class="anchor" href="#calls-errors-retries" aria-label="Link to this section">#</a>Calls, errors, retries</h2>
 <ul>
-<li>Calls are <strong>never retried automatically</strong>. Retrying a non-idempotent action (such as <code>increment</code>) can apply it twice.</li>
+<li>The Workers runtime retries a call that fails before it reaches the actor: up to 4 retries, none starting more than 10 seconds after the call. It never runs an action twice. If it gives up, or the connection drops after the actor received the call, you get a <code>transport</code> error and the outcome is unknown. See <a href="https://developers.cloudflare.com/durable-objects/best-practices/automatic-retries/" target="_blank" rel="noopener">Durable Objects automatic retries</a>.</li>
+<li>Actors does not retry on top of that. If you retry yourself, retry once or twice at most, and only idempotent or deduplicated actions: retrying a non-idempotent action (such as <code>increment</code>) can apply it twice.</li>
 <li>Every failure surfaces as an <code>ActorError</code> with a <code>kind</code>:</li>
 </ul>
 <div class="table-wrap"><table><thead><tr><th>kind</th><th>Meaning</th><th>Did the action&#39;s state change commit?</th></tr></thead><tbody><tr><td><code>action</code></td><td>The action threw (<code>code</code> is preserved if the error had one)</td><td>No</td></tr>

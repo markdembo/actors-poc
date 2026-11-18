@@ -61,7 +61,7 @@ Both landed on several of the same ideas:
 | Value types | Also Date, Map, Set, RegExp and Error (type markers) | Strict JSON; other types are rejected with a fix-it message |
 | Instance list | Opt-in (`handler(..., { track })`), only for calls through `handler()`; listing means raw SQL on the `_cf_actors` instance | Every local instance via Wrangler's Local Explorer; dev only (§3.2) |
 | Tooling | Library only | CLI, config generation, Actor Explorer, `actors inspect`, call log, redaction |
-| Retries | Opt-in helpers (`tryN`, jittered backoff, `isErrorRetryable`) | None, by design; typed `ActorError` with `kind` and `code` |
+| Retries | Opt-in helpers (`tryN`, jittered backoff, `isErrorRetryable`) | None of its own: the Workers runtime retries calls that never reached the actor. Typed `ActorError` with `kind` and `code` |
 
 Features it has that this PoC lacks:
 - HTTP routing (`handler()`, `nameFromRequest`)

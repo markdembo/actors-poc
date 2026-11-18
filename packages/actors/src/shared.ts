@@ -72,7 +72,7 @@ export class ActorError extends Error {
   readonly remoteName?: string;
   /** Stack trace from inside the actor. */
   readonly remoteStack?: string;
-  /** True only when the platform says the call is safe to retry. Never retried automatically. */
+  /** True only when the platform says the call is safe to retry. The runtime has already retried it before this error is raised. */
   readonly retryable: boolean;
 
   constructor(
