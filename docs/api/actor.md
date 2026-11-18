@@ -19,6 +19,8 @@ Defines an actor type. Export the result from any file under `src/` as `export c
   - Runs once, before the first action or connection of a new instance, in the same transaction.
 - `config.validate` `(state: S) => void` Optional
   - Runs before every commit. Throw to reject the commit as a `validation` error. Works well with schema libraries: `validate: (s) => void Schema.parse(s)`.
+- `config.migrations` `((state, ctx: { actor, key, sql }) => object)[]` Optional
+  - Changes to the shape of state, oldest first. Append only. Each takes the previous state and returns the next. An instance runs the ones it hasn't run yet on its first call after a deploy, synchronously and in one transaction, before the action. New instances start from `state` and never run them. Refer to [Changing actors safely](../best-practices/changing-actors.md).
 - `config.redact` `{ state?: (keyof S)[]; args?: (keyof A)[] }` Optional
   - Top-level state keys shown as `"[redacted]"` in the Actor Explorer and `actors inspect`, and actions whose arguments are never recorded in the invocation log.
 - `config.connections` `ConnectionsConfig<S, C>` Optional

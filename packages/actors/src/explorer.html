@@ -7,7 +7,7 @@
 <style>
 :root {
   --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e4e3df;
-  --accent: #f38020; --accent-ink: #ffffff; --ok: #1f7a3d; --err: #b42318; --err-bg: #fdecea;
+  --accent: #f38020; --accent-ink: #ffffff; --ok: #1f7a3d; --err: #b42318; --err-bg: #fdecea; --warn: #9a5b00;
   --code-bg: #f1f0ec; --hl: #fff3d6;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -15,7 +15,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #9b9a94; --line: #2f2f2c;
-    --accent: #f69a4b; --accent-ink: #1d1d1b; --ok: #5cc185; --err: #ff8a80; --err-bg: #3a1f1d;
+    --accent: #f69a4b; --accent-ink: #1d1d1b; --ok: #5cc185; --err: #ff8a80; --err-bg: #3a1f1d; --warn: #f2b45c;
     --code-bg: #262624; --hl: #3b3220;
   }
 }
@@ -61,6 +61,10 @@ pre .hl { background: var(--hl); border-radius: 3px; }
 .pill { font: 600 11px var(--sans); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .pill.ok { color: var(--ok); border-color: currentColor; }
 .pill.err { color: var(--err); border-color: currentColor; }
+.pill.warn { color: var(--warn); border-color: currentColor; }
+.pill.ver { font-family: var(--mono); font-weight: 500; }
+.timeline li.deploy { color: var(--muted); font-size: 12px; text-align: center; border-top: 1px dashed var(--line); }
+.versions { color: var(--muted); font: 11px var(--mono); margin: 0 0 4px 8px; }
 .console-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .hint { color: var(--muted); font: 12px var(--mono); margin: 4px 0 8px; }
 .result { margin-top: 10px; }
@@ -143,9 +147,16 @@ function renderSide() {
     const inst = instances.filter((i) => i.actor === t.name);
     html += '<div class="type"><div class="type-name">' + esc(t.name) + "<small>" + t.actions.length + " actions</small></div>";
     if (!inst.length) html += '<div class="empty">No instances observed yet</div>';
+    const byVersion = {};
+    for (const i of inst) if (i.codeVersion) byVersion[i.codeVersion] = (byVersion[i.codeVersion] || 0) + 1;
+    if (Object.keys(byVersion).length > 1) {
+      html += '<div class="versions" title="Code version of each instance\'s most recent call">' +
+        Object.entries(byVersion).map(([v, n]) => esc(v) + " ×" + n).join(" · ") + "</div>";
+    }
     for (const i of inst) {
       const active = current && current.type === i.actor && current.key === i.key ? " active" : "";
-      html += '<button class="inst' + active + '" data-type="' + esc(i.actor) + '" data-key="' + esc(i.key) + '"><span>' + esc(i.key) + "</span>" +
+      html += '<button class="inst' + active + '" data-type="' + esc(i.actor) + '" data-key="' + esc(i.key) + '"' +
+        (i.codeVersion ? ' title="last call ran code ' + esc(i.codeVersion) + (i.schema !== null ? ", schema " + i.schema : "") + '"' : "") + "><span>" + esc(i.key) + "</span>" +
         (i.errors ? '<span class="err" title="failed invocations among the last 100">' + i.errors + " err</span>" : '<span title="recent invocations (last 100)">' + (i.invocations ?? "") + "</span>") + "</button>";
     }
     html += "</div>";
@@ -186,6 +197,17 @@ function renderWelcome() {
     "<p>From a terminal: <code>actors inspect &lt;Type&gt; &lt;key&gt;</code></p></div>";
 }
 
+function schemaPill(d) {
+  if (d.schema > d.latestSchema) {
+    return '<span class="pill err" title="This state has run more migrations than this code defines. Calls fail until a version with all of them is deployed.">schema ' +
+      d.schema + ": saved by newer code</span>";
+  }
+  if (d.schema < d.latestSchema) {
+    return '<span class="pill warn" title="Migrations run on the next call">schema ' + d.schema + " → " + d.latestSchema + " on next call</span>";
+  }
+  return '<span class="pill" title="Migrations this state has run">schema ' + d.schema + "</span>";
+}
+
 function stateHtml(state, keys) {
   if (state === undefined) return '<pre class="empty">No state yet: this instance has not committed an action.</pre>';
   const text = JSON.stringify(state, null, 2);
@@ -222,7 +244,7 @@ async function loadDetail() {
   const L = d.lifecycle || { durableObjectId: "—", instanceStartedAt: null, activeAction: null, queuedActions: 0, nextAlarm: null, note: "This key has no instance in local storage. Invoke an action to create it." };
 
   let html = '<div class="ident"><span class="t">' + esc(d.actor) + '</span><span class="k">"' + esc(d.key) + '"</span>' +
-    (d.exists ? '<span class="pill">v' + d.version + "</span>" : '<span class="pill">not created</span>') +
+    (d.exists ? '<span class="pill" title="revision: committed changes so far">rev ' + d.version + "</span>" + schemaPill(d) : '<span class="pill">not created</span>') +
     '<span class="actions"><button class="btn" id="refresh">Refresh</button>' + (d.lifecycle ? '<button class="btn danger" id="wipe">Delete instance…</button>' : "") + '</span></div>';
 
   html += '<div class="grid2"><div>';
@@ -238,24 +260,37 @@ async function loadDetail() {
   html += '<div class="card"><h3>Activity <span class="pill">' + d.invocations.length + " recent</span></h3>";
   if (!d.invocations.length) html += '<div class="empty">No recorded invocations.</div>';
   html += '<ul class="timeline">';
-  for (const inv of d.invocations) {
-    html += '<li><div class="tl-head"><span class="pill ' + (inv.ok ? "ok" : "err") + '">' + (inv.ok ? "ok" : "error") + '</span><span class="m">' + esc(inv.method) + "(" + esc(inv.args ? inv.args.slice(1, -1) : "…") + ")</span>" +
+  d.invocations.forEach((inv, n) => {
+    const older = d.invocations[n + 1];
+    const migration = inv.source === "migration";
+    const call = migration
+      ? '<span class="m">migrate</span><span class="pill' + (inv.ok ? "" : " err") + '">schema ' + inv.migratedFrom + " → " + (inv.ok ? inv.schema : "?") + "</span>"
+      : '<span class="m">' + esc(inv.method) + "(" + esc(inv.args ? inv.args.slice(1, -1) : "…") + ")</span>";
+    const skew = inv.callerVersion && inv.codeVersion && inv.callerVersion !== inv.codeVersion;
+    html += '<li><div class="tl-head"><span class="pill ' + (inv.ok ? "ok" : "err") + '">' + (inv.ok ? "ok" : "error") + "</span>" + call +
+      (inv.codeVersion ? '<span class="pill ver" title="code version that ran this">' + esc(inv.codeVersion) + "</span>" : "") +
+      (skew ? '<span class="pill ver warn" title="the calling Worker runs a different code version">called from ' + esc(inv.callerVersion) + "</span>" : "") +
       '<span class="meta">' + esc(inv.source) + " · " + inv.durationMs + "ms · " + ago(inv.ts) + " · #" + esc(inv.invocation) +
-      (inv.ok ? (inv.changed ? " · v" + inv.version + " · changed " + esc(inv.changedKeys.join(", ")) : " · no state change") : " · rolled back") + "</span></div>";
+      (inv.ok ? (inv.changed ? " · rev " + inv.version + " · changed " + esc(inv.changedKeys.join(", ")) : " · no state change") : " · rolled back") + "</span></div>";
     const body = [];
     if (inv.error) body.push('<div class="err">' + esc(inv.error.name) + ": " + esc(inv.error.message) + (inv.error.code ? " [" + esc(inv.error.code) + "]" : "") + "</div>" +
       (inv.error.stack ? "<details><summary>stack trace</summary><pre>" + esc(inv.error.stack) + "</pre></details>" : ""));
     if (inv.logs.length) body.push("<details" + (inv.error ? " open" : "") + "><summary>" + inv.logs.length + " log line(s)</summary><pre>" + esc(inv.logs.join("\n")) + "</pre></details>");
     if (body.length) html += '<div class="tl-body">' + body.join("") + "</div>";
     html += "</li>";
-  }
+    if (older && older.codeVersion && inv.codeVersion && older.codeVersion !== inv.codeVersion) {
+      html += '<li class="deploy">new code version: ' + esc(older.codeVersion) + " → " + esc(inv.codeVersion) + "</li>";
+    }
+  });
   html += "</ul></div></div><div>";
 
   html += '<div class="card"><h3>Storage</h3><dl class="kv"><dt>created</dt><dd>' + (d.createdAt ? new Date(d.createdAt).toLocaleString() : "—") +
     "</dd><dt>updated</dt><dd>" + (d.updatedAt ? ago(d.updatedAt) : "—") + "</dd><dt>state size</dt><dd>" + d.storage.stateBytes.toLocaleString() + " bytes</dd>" +
-    "<dt>SQLite size</dt><dd>" + d.storage.databaseSizeBytes.toLocaleString() + " bytes</dd><dt>version</dt><dd>" + (d.version ?? "—") + "</dd></dl></div>";
+    "<dt>SQLite size</dt><dd>" + d.storage.databaseSizeBytes.toLocaleString() + " bytes</dd><dt>revision</dt><dd>" + (d.version ?? "—") +
+    "</dd><dt>schema</dt><dd>" + (d.schema ?? "—") + " (code defines " + d.latestSchema + " migration" + (d.latestSchema === 1 ? "" : "s") + ")</dd></dl></div>";
 
-  html += '<div class="card"><h3>Runtime</h3><dl class="kv"><dt>DO id</dt><dd>' + esc(L.durableObjectId) + "</dd><dt>instance started</dt><dd>" + (L.instanceStartedAt ? ago(L.instanceStartedAt) : "—") +
+  html += '<div class="card"><h3>Runtime</h3><dl class="kv"><dt>DO id</dt><dd>' + esc(L.durableObjectId) + "</dd>" +
+    (L.codeVersion ? "<dt>code version</dt><dd>" + esc(L.codeVersion) + "</dd>" : "") + "<dt>instance started</dt><dd>" + (L.instanceStartedAt ? ago(L.instanceStartedAt) : "—") +
     "</dd><dt>running now</dt><dd>" + (L.activeAction ? esc(L.activeAction.method) + " for " + Math.round((Date.now() - L.activeAction.since) / 1000) + "s" : "idle") +
     "</dd><dt>queued</dt><dd>" + L.queuedActions + "</dd><dt>next alarm</dt><dd>" + (L.nextAlarm ? new Date(L.nextAlarm).toLocaleTimeString() : "none") +
     '</dd></dl><p class="hint">' + esc(L.note) + "</p></div>";

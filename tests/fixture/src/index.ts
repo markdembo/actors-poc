@@ -1,7 +1,9 @@
+import { env } from "cloudflare:workers";
 import { ActorError, durable } from "actors-poc";
 import { Ledger } from "./ledger";
 import { Probe } from "./probe";
 import { Room } from "./room";
+import { Shape } from "./shape";
 
 // POST /call/:key/:method?timeoutMs=  body: JSON array of args
 export default {
@@ -13,6 +15,23 @@ export default {
       const args = request.method === "POST" ? await request.json<unknown[]>() : [];
       const ref = Room.get(key) as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
       return Response.json({ ok: true, value: await ref[method](...args) });
+    }
+    if (route === "shape" || route === "skew") {
+      try {
+        if (route === "skew") {
+          // A caller on another code version asking for an action this version doesn't have.
+          const ns = (env as unknown as { ACTORS: DurableObjectNamespace }).ACTORS;
+          const stub = ns.get(ns.idFromName(`Probe:${key}`)) as unknown as { actorInvoke(r: unknown): Promise<unknown> };
+          const req = { actor: "Probe", key, method, args: [], source: "rpc", callerVersion: "other-version" };
+          return Response.json(await stub.actorInvoke(req));
+        }
+        const ref = Shape.get(key) as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
+        const args = request.method === "POST" ? await request.json<unknown[]>() : [];
+        return Response.json({ ok: true, value: await ref[method](...args) });
+      } catch (err) {
+        if (!(err instanceof ActorError)) throw err;
+        return Response.json({ ok: false, error: { kind: err.kind, message: err.message } });
+      }
     }
     if (route === "ledger") {
       const ledger = durable(Ledger).get(key);

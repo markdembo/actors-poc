@@ -97,16 +97,17 @@ state.tags = [...new Set(state.tags)];  // arrays, not Sets
 state.lastSeenAt = new Date();
 ```
 
-### Plan for old state shapes
+### Change the shape of state with a migration
 
-There are no state migrations. Instances keep whatever shape they last saved. When you add a field, default it where you read it, or normalize it in `validate`.
+Instances keep whatever shape they last saved until a migration changes it. When you rename, add or restructure fields, append a migration instead of handling old shapes in every action. Refer to [Changing actors safely](changing-actors.md).
 
 ```ts
-// ✅ Works for instances saved before `tags` existed.
-const tags = state.tags ?? [];
+// ✅ Every instance has `tags` by the time an action runs.
+migrations: [(s) => ({ ...s, tags: [] })],
+actions: { tag: ({ state }, tag: string) => void state.tags.push(tag) },
 
-// 🔴 Throws for every pre-existing instance.
-state.tags.push(tag);
+// 🔴 Throws for every instance saved before `tags` existed.
+actions: { tag: ({ state }, tag: string) => void state.tags.push(tag) },
 ```
 
 ### Derive what you can instead of storing it

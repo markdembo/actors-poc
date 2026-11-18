@@ -22,6 +22,7 @@ import { env as workerEnv } from "cloudflare:workers";
 import {
   ActorError,
   BINDING,
+  codeVersion,
   findJsonProblem,
   HEADER_ACTOR,
   HEADER_DATA,
@@ -121,6 +122,18 @@ export interface ActionContext<S, C = unknown> {
   connections(): ConnectionInfo<C>[];
 }
 
+/** What a migration receives besides the old state. Runs synchronously: no awaits, no fetch, no other actors. */
+export interface MigrationContext {
+  readonly actor: string;
+  readonly key: string;
+  /** Raw SQLite, in the same transaction as the migration: use it to change your own tables too. */
+  readonly sql: SqlStorage;
+}
+
+/** One step in `migrations`: old state in, new state out. */
+// biome-ignore lint: old shapes are not typed; annotate the parameter if you want to.
+export type Migration = (state: any, ctx: MigrationContext) => object;
+
 // biome-ignore lint: `any` is required for contextual typing of action parameters.
 export type ActionFn<S, C = any> = (ctx: ActionContext<S, C>, ...args: any[]) => unknown;
 
@@ -135,6 +148,14 @@ export interface ActorConfig<S extends object, A extends Record<string, ActionFn
   onCreate?: (ctx: ActionContext<S>) => void | Promise<void>;
   /** Extra validation before every commit (e.g. `(s) => schema.parse(s)`). Throw to reject the commit. */
   validate?: (state: S) => void;
+  /**
+   * Changes to the shape of state, oldest first. Append only: never edit, reorder or remove one.
+   * Each takes the previous state and returns the next; the last must return the current shape `S`.
+   * An instance runs the ones it hasn't run yet, in order, the first time it is called after a deploy:
+   * synchronously, in one transaction of their own (together with any `ctx.sql` changes), before the action.
+   * New instances start from `state` and never run them.
+   */
+  migrations?: readonly Migration[];
   /**
    * Keep sensitive data out of dev tooling (Actor Explorer, `actors inspect`, invocation log):
    *  - state: top-level state keys shown as "[redacted]"
@@ -200,6 +221,13 @@ export function actor<S extends object, A extends Record<string, ActionFn<S, C>>
   }
 
   let registeredName: string | undefined = config.name;
+
+  if (config.migrations !== undefined) {
+    if (!Array.isArray(config.migrations)) throw new TypeError("actor(config): `migrations` must be an array of functions");
+    config.migrations.forEach((m, i) => {
+      if (typeof m !== "function") throw new TypeError(`actor(config): migrations[${i}] is not a function`);
+    });
+  }
 
   for (const hook of ["onConnect", "onMessage", "onClose"] as const) {
     const fn = config.connections?.[hook];
@@ -272,7 +300,8 @@ export function actor<S extends object, A extends Record<string, ActionFn<S, C>>
                 );
               }
               stub ??= resolveStub(name, key);
-              return invoke(stub, { actor: name, key, method: prop, args, source: "rpc" }, options);
+              const callerVersion = codeVersion(workerEnv);
+              return invoke(stub, { actor: name, key, method: prop, args, source: "rpc", callerVersion }, options);
             };
             cache.set(prop, fn);
           }

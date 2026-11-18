@@ -37,7 +37,7 @@ const NAV = [
     title: "Tutorials",
     pages: [["Build a chat room", "tutorials/build-a-chat-room.md"], ["Build a persistent AI agent", "tutorials/build-an-ai-agent.md"]],
   },
-  { title: "Best practices", pages: [["Rules of actors", "best-practices/rules-of-actors.md"], ["WebSockets", "best-practices/websockets.md"]] },
+  { title: "Best practices", pages: [["Rules of actors", "best-practices/rules-of-actors.md"], ["WebSockets", "best-practices/websockets.md"], ["Changing actors safely", "best-practices/changing-actors.md"]] },
   {
     title: "API",
     pages: [

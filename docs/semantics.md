@@ -71,9 +71,15 @@ Things that are **not** inside the transaction:
 
 All state lives in SQLite. In-memory state is only a cache of the committed document. After an eviction, crash or redeploy, the next call reloads from storage. Tests cover state and invocation history surviving a full runtime restart. `lifecycle.instanceStartedAt` in `inspect` changes when the instance was recreated. The runtime does not expose other eviction or placement events, and the PoC does not pretend it does.
 
-## Schema changes
+## Versions and migrations
 
-The state document has no schema version. If you change the shape of state, old instances keep their old shape until an action rewrites it. Handle this with defaults in your actions, or a `validate` that normalizes. Versioned migrations are future work (PRD §15).
+- **Schema.** Each instance stores how many of its actor's `migrations` it has run. New instances start at the current count and never run them. Instances created before migrations existed are at 0.
+- **Lazy.** Migrations run on the first call after the code changes: any action, connection hook or scheduled call. Instances that are never called are never migrated.
+- **Atomic and separate.** Missing migrations run in order, synchronously, in one transaction of their own that also covers their `ctx.sql` changes, before the action. The result must be JSON and pass `validate`. A migration that succeeds stays committed even if the action after it fails. A migration that throws changes nothing; the call fails with kind `version`, and the next call retries.
+- **Forward only.** Code that defines fewer migrations than an instance has run refuses to run against it: every call fails with kind `version` and nothing is written. Scheduled calls that fail this way are postponed by 60 seconds without counting as an attempt.
+- **Mixed versions.** During a deploy, an instance runs one code version at a time, and its callers may run another. A call for an action this version doesn't have fails with kind `version` when the caller's code version differs, or `config` when it doesn't.
+- **Recorded.** Each log entry stores the code version that ran it (the version tag, or the first 8 characters of the version id, from the `CF_VERSION_METADATA` binding) and the caller's code version. Migrations are logged as their own entries, also when instrumentation is `errors`.
+- **Checked before shipping.** `actors deploy` and `actors upload` compare actions and migrations with `actors.lock.json` and refuse breaking changes unless `--allow-breaking` is passed. Argument and return types are compared structurally from TypeScript: the new version must accept every argument the old callers could send, and return only values they understand. `any` and `unknown` are not checked; without TypeScript, only the number of arguments is.
 
 ## Limits
 

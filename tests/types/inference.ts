@@ -135,3 +135,24 @@ async function roomUsage(request: Request) {
   await Counter.connect("c", request, { data: { user: "ada" } });
 }
 void roomUsage;
+
+// ── Migrations: old shapes are untyped (annotate if you like); each step returns the next state.
+export const Migrated = actor({
+  state: { items: [] as string[], currency: "USD" },
+  migrations: [
+    ({ lines, ...s }: { lines: string[] }) => ({ ...s, items: lines }),
+    (s, ctx) => {
+      ctx.sql.exec("SELECT 1");
+      const k: string = ctx.key;
+      void k;
+      return { ...s, currency: "USD" };
+    },
+  ],
+  actions: { count: ({ state }) => state.items.length },
+});
+actor({
+  state: { n: 0 },
+  // @ts-expect-error a migration must return the new state
+  migrations: [(s) => void s],
+  actions: {},
+});

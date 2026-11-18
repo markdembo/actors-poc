@@ -19,7 +19,7 @@
 </header>
 <div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
 <div class="layout">
-  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">Custom classes</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="cli.html" aria-current="page" class="active">CLI</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="../best-practices/rules-of-actors.html">Rules of actors</a></li><li><a href="../best-practices/websockets.html">WebSockets</a></li><li><a href="../best-practices/changing-actors.html">Changing actors safely</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">Custom classes</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="cli.html" aria-current="page" class="active">CLI</a></li><li><a href="configuration.html">Configuration</a></li><li><a href="limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
   <main class="content">
     <p class="crumb">Reference</p>
     <article><h1>CLI</h1>
@@ -39,7 +39,7 @@
 <li><code>.actors/entry.ts</code>: the production entry point.</li>
 <li><code>.actors/entry.dev.ts</code>: the development entry point, with the Actor Explorer.</li>
 <li><code>.actors/manifest.json</code>: what was discovered.</li>
-<li><code>wrangler.jsonc</code>: creates the file, or edits it in place, keeping your settings and comments. It sets <code>main</code>, adds the <code>ACTORS</code> binding and the <code>actors-v1</code> migration, and adds one binding and migration per custom class.</li>
+<li><code>wrangler.jsonc</code>: creates the file, or edits it in place, keeping your settings and comments. It sets <code>main</code>, adds the <code>ACTORS</code> binding, the <code>actors-v1</code> migration and the <code>CF_VERSION_METADATA</code> version metadata binding, and adds one binding and migration per custom class.</li>
 </ul>
 <p>Running it twice changes nothing. It fails with an explanation when:</p>
 <ul>
@@ -55,13 +55,32 @@
 <p>The Actor Explorer is served at <code>/__actors</code>.</p>
 <h2 id="deploy"><a class="anchor" href="#deploy" aria-label="Link to this section">#</a><code>deploy</code></h2>
 <figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors deploy [wrangler deploy options]</code></pre></figure>
-<p>Runs <code>generate</code>, checks that the production entry contains no development tooling, then runs <code>wrangler deploy</code> with any options you pass, such as <code>--dry-run --outdir dist</code>.</p>
+<p>Runs <code>generate</code>, checks that the production entry contains no development tooling, runs the <a href="#check">compatibility check</a>, then runs <code>wrangler deploy</code> with any options you pass, such as <code>--dry-run --outdir dist</code>.</p>
+<p>After a successful deploy (not a dry run), it writes <code>actors.lock.json</code>: the actors, actions and migrations that shipped. Commit it. With <code>--env &lt;name&gt;</code>, the file is <code>actors.lock.&lt;name&gt;.json</code>.</p>
+<ul>
+<li><code>--allow-breaking</code>: deploy even when the check finds breaking changes. Use it once no Worker version that calls the removed actions is deployed.</li>
+</ul>
+<h2 id="upload"><a class="anchor" href="#upload" aria-label="Link to this section">#</a><code>upload</code></h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors upload [wrangler versions upload options]</code></pre></figure>
+<p>Like <code>deploy</code>, but runs <code>wrangler versions upload</code>: the new version is uploaded without serving traffic. Roll it out with <code>npx wrangler versions deploy</code>, for example 10% first. Pass <code>--tag v2</code> to name the version; the tag is what the Explorer and <code>inspect</code> show for calls it handles.</p>
+<p>Refuses when the version adds or removes a Durable Object class, because those can&#39;t roll out gradually. Ship them with <code>actors deploy</code> first.</p>
+<h2 id="check"><a class="anchor" href="#check" aria-label="Link to this section">#</a><code>check</code></h2>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors check [--<span class="hljs-built_in">env</span> &lt;name&gt;] [--allow-breaking]</code></pre></figure>
+<p>Compares your actors with the version last shipped (<code>actors.lock.json</code>). While a deploy rolls out, old and new code call each other, so it fails on:</p>
+<ul>
+<li>a removed actor type or action</li>
+<li>an argument whose type changed so that old callers&#39; values are no longer accepted, a new required argument or property, or an optional one that became required</li>
+<li>a return type that can now produce values old callers don&#39;t expect</li>
+<li>fewer migrations than before</li>
+</ul>
+<p>Types come from the TypeScript compiler, using the project&#39;s <code>tsconfig.json</code>. They are stored in the lock file by structure, so renaming a type isn&#39;t a change. Without TypeScript in the project, the check compares the number of arguments instead. Arguments typed <code>any</code> or <code>unknown</code> aren&#39;t checked.</p>
+<p>It also notes new migrations, migrations that look different from the shipped ones, and new Durable Object class migrations. It loads your actor files in Node to read their actions and migrations, with <code>cloudflare:*</code> modules stubbed. If that fails, it says so and skips the check instead of blocking. <code>deploy</code> and <code>upload</code> run it for you. Refer to <a href="../best-practices/changing-actors.html">Changing actors safely</a>.</p>
 <h2 id="inspect"><a class="anchor" href="#inspect" aria-label="Link to this section">#</a><code>inspect</code></h2>
 <figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors inspect &lt;Type&gt; &lt;key&gt; [--port 8787] [--json]</code></pre></figure>
 <p>Prints one instance:</p>
 <ul>
-<li>its state, with redacted keys hidden</li>
-<li>its last 15 invocations, with errors, stack traces and log lines</li>
+<li>its state, with redacted keys hidden, and its schema (how many migrations it has run)</li>
+<li>its last 15 invocations, with errors, stack traces, log lines and the code version that ran each one, including migrations</li>
 <li>pending schedules</li>
 <li>storage size</li>
 <li>runtime info: what&#39;s running, how many calls are queued, the next alarm</li>
@@ -71,12 +90,13 @@
 <p>Requires a running <code>actors dev</code>. Inspecting a key that doesn&#39;t exist reports &quot;not created&quot; and doesn&#39;t create it.</p>
 <h2 id="list"><a class="anchor" href="#list" aria-label="Link to this section">#</a><code>list</code></h2>
 <figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors list [--port 8787] [--json]</code></pre></figure>
-<p>Lists actor types with their actions and parameters, and every instance in local storage with its recent call and error counts. Requires a running <code>actors dev</code>.</p>
+<p>Lists actor types with their actions and parameters, and every instance in local storage with its recent call and error counts, schema and the code version of its last call. Requires a running <code>actors dev</code>.</p>
 <h2 id="actor-explorer"><a class="anchor" href="#actor-explorer" aria-label="Link to this section">#</a>Actor Explorer</h2>
 <p>A web UI served by <code>actors dev</code> at <code>http://localhost:8787/__actors</code>. It is not included in production builds, and it only answers requests addressed to <code>localhost</code>.</p>
 <ul>
 <li><strong>Actor types and instances.</strong> Every instance in local storage, read through Wrangler&#39;s Local Explorer API. Instances with recent failures are flagged.</li>
 <li><strong>Instance view.</strong> Saved state with the last change highlighted, an action console that takes JSON arguments, the activity timeline with stack traces and logs, storage size, runtime info, open connections, and pending schedules. You can delete an instance&#39;s storage from here.</li>
+<li><strong>Versions.</strong> Each timeline entry shows the code version that ran it, with a marker where it changes, and calls from a Worker on another version are flagged. Migrations are entries of their own. The header shows the instance&#39;s schema, or that it will migrate on its next call. When an actor&#39;s instances last ran different code versions, the list shows how many ran each.</li>
 <li><strong>Custom classes.</strong> Instances of your <a href="../api/durable.html">custom classes</a>, with a read-only, paged view of their SQLite tables. Opening one starts it if it wasn&#39;t running.</li>
 </ul>
 <p>The Explorer reads storage through Wrangler&#39;s Local Explorer API (<code>/cdn-cgi/local/explorer/api</code>). It requires Wrangler 4.163 or later, and it doesn&#39;t work if <code>X_LOCAL_EXPLORER</code> is set to <code>false</code>.</p>
@@ -87,7 +107,7 @@
     <nav class="pager" aria-label="Pagination"><a class="prev" href="../api/durable.html"><span>Previous</span>Custom classes</a><a class="next" href="configuration.html"><span>Next</span>Configuration</a></nav>
     <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
   </main>
-  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#generate">generate</a></li><li class="d2"><a href="#dev">dev</a></li><li class="d2"><a href="#deploy">deploy</a></li><li class="d2"><a href="#inspect">inspect</a></li><li class="d2"><a href="#list">list</a></li><li class="d2"><a href="#actor-explorer">Actor Explorer</a></li></ul></aside>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#generate">generate</a></li><li class="d2"><a href="#dev">dev</a></li><li class="d2"><a href="#deploy">deploy</a></li><li class="d2"><a href="#upload">upload</a></li><li class="d2"><a href="#check">check</a></li><li class="d2"><a href="#inspect">inspect</a></li><li class="d2"><a href="#list">list</a></li><li class="d2"><a href="#actor-explorer">Actor Explorer</a></li></ul></aside>
 </div>
 <script src="../assets/site.js"></script>
 </body>

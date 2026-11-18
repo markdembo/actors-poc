@@ -6,7 +6,8 @@
   "license": "MIT",
   "scripts": {
     "typecheck": "pnpm -r run typecheck && tsc -p tests/types",
-    "test": "pnpm typecheck && pnpm test:e2e",
+    "test": "pnpm typecheck && pnpm test:compat && pnpm test:e2e",
+    "test:compat": "node tests/compat.mjs",
     "measure": "node comparison/measure.mjs",
     "test:e2e": "node tests/e2e.mjs",
     "docs:build": "node scripts/build-docs.mjs",

@@ -5,7 +5,22 @@ export const BINDING = "ACTORS";
 /** The single Durable Object class that hosts every actor type. */
 export const HOST_CLASS = "ActorHost";
 
-export type InvokeSource = "rpc" | "explorer" | "schedule" | "websocket";
+export type InvokeSource = "rpc" | "explorer" | "schedule" | "websocket" | "migration";
+
+/** The `version_metadata` binding `actors generate` adds. The runtime records which code version ran each call. */
+export const VERSION_BINDING = "CF_VERSION_METADATA";
+
+/**
+ * A short label for the code version running in this isolate: the version tag if there is one
+ * (`wrangler versions upload --tag v2`), otherwise the first 8 characters of the version id.
+ * Local dev gets a new random id each time the dev server starts. Without the binding: "unknown".
+ */
+export function codeVersion(env: unknown): string {
+  const meta = (env as Record<string, { id?: string; tag?: string } | undefined> | undefined)?.[VERSION_BINDING];
+  if (meta?.tag) return meta.tag;
+  if (meta?.id) return meta.id.slice(0, 8);
+  return "unknown";
+}
 
 /** Headers the Worker-side `connect()` sets on the upgrade request it forwards to the instance. */
 export const HEADER_ACTOR = "x-actors-actor";
@@ -20,6 +35,8 @@ export interface InvokeRequest {
   method: string;
   args: unknown[];
   source: InvokeSource;
+  /** Code version of the caller (see codeVersion). Differs from the instance's during a gradual deployment. */
+  callerVersion?: string;
 }
 
 export interface SerializedError {
@@ -38,8 +55,10 @@ export type InvokeResult = { ok: true; value: unknown } | { ok: false; error: Se
  * - config:     unknown actor/action, missing binding, bad key
  * - transport:  the call failed in transit; the action may or may not have run
  * - timeout:    the caller stopped waiting; the action may still complete
+ * - version:    code and state (or caller and instance) are from different versions: the state was saved
+ *               by newer code, a migration failed, or the caller expects an action this version lacks
  */
-export type ActorErrorKind = "action" | "validation" | "config" | "transport" | "timeout";
+export type ActorErrorKind = "action" | "validation" | "config" | "transport" | "timeout" | "version";
 
 export class ActorError extends Error {
   override name = "ActorError";

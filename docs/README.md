@@ -42,6 +42,9 @@ Run an action later, at least once, with retries. Scheduling is part of the same
 #### [Actor Explorer](reference/cli.md#actor-explorer)
 A local web UI and CLI to list actors, read their state, invoke actions and trace failures.
 
+#### [Migrations and versions](best-practices/changing-actors.md)
+Change the shape of state with append-only migrations that run on each actor's next call. Every call records which code version ran it, so mixed versions during a deploy are visible.
+
 #### [Custom classes](api/durable.md)
 When an actor isn't the right shape, write your own class with full control over storage, and keep the zero-config setup and typed client.
 

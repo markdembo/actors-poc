@@ -3,20 +3,28 @@
 //
 //   actors generate            discover actors, write .actors/ entry points, manage wrangler.jsonc
 //   actors dev [wrangler args] generate, then `wrangler dev` with the Actor Explorer at /__actors
-//   actors deploy [args]       generate, then `wrangler deploy` (no explorer / admin routes)
+//   actors deploy [args]       generate, check compatibility, then `wrangler deploy` (no explorer / admin routes)
+//   actors upload [args]       generate, check compatibility, then `wrangler versions upload` (gradual deployments)
+//   actors check               compare actor APIs and migrations with the last deployed or uploaded version
 //   actors inspect <Type> <key> [--port 8787] [--json]
 //   actors list [--port 8787] [--json]
 //
 // The CLI never deploys anything itself: it writes standard Wrangler config and delegates.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyEdits, modify, parse as parseJsonc, printParseErrorCode } from "jsonc-parser";
+import { compareAction, readTypes } from "./types.mjs";
 
 const BINDING = "ACTORS";
 const HOST_CLASS = "ActorHost";
 const MIGRATION_TAG = "actors-v1";
+const VERSION_BINDING = "CF_VERSION_METADATA";
+const LOCK_FILE = "actors.lock.json";
 const GEN_DIR = ".actors";
 const PROD_ENTRY = `${GEN_DIR}/entry.ts`;
 const DEV_ENTRY = `${GEN_DIR}/entry.dev.ts`;
@@ -188,10 +196,12 @@ function ensureWranglerConfig(root, objects = [], otherClasses = []) {
 
   // ── Managed by \`actors generate\` ──────────────────────────────────────────
   // One Durable Object class (${HOST_CLASS}) hosts every actor type, so adding or
-  // removing actors never needs a new migration. Everything else here is yours.
+  // removing actors never needs a new migration. version_metadata lets the runtime
+  // record which code version handled each call. Everything else here is yours.
   "main": "${PROD_ENTRY}",
   "durable_objects": { "bindings": [{ "name": "${BINDING}", "class_name": "${HOST_CLASS}" }] },
-  "migrations": [{ "tag": "${MIGRATION_TAG}", "new_sqlite_classes": ["${HOST_CLASS}"] }]
+  "migrations": [{ "tag": "${MIGRATION_TAG}", "new_sqlite_classes": ["${HOST_CLASS}"] }],
+  "version_metadata": { "binding": "${VERSION_BINDING}" }
 }
 `;
     changes.push("created wrangler.jsonc");
@@ -247,9 +257,25 @@ function ensureWranglerConfig(root, objects = [], otherClasses = []) {
     changes.push(`added migration ${MIGRATION_TAG} (new_sqlite_classes: ${HOST_CLASS})`);
   }
 
+  // ── Code version: recorded with every call, so mixed versions during a gradual deployment are visible.
+  const warnings = [];
+  if (!cfg.version_metadata) {
+    const taken = bindingNames(cfg).get(VERSION_BINDING);
+    if (taken) {
+      warnings.push(`${VERSION_BINDING} is already used by ${taken}, so the code version of each call won't be recorded.`);
+    } else {
+      edit(["version_metadata"], { binding: VERSION_BINDING });
+      changes.push(`added version_metadata binding ${VERSION_BINDING}`);
+    }
+  } else if (cfg.version_metadata.binding !== VERSION_BINDING) {
+    warnings.push(
+      `version_metadata is bound as ${cfg.version_metadata.binding}. Actors reads it as ${VERSION_BINDING}; ` +
+        "rename the binding to record which code version handled each call.",
+    );
+  }
+
   // ── Raw Durable Object classes: one binding + one migration each, never removed automatically.
   const objectBindings = {};
-  const warnings = [];
   const migrated = (cls) =>
     (cfg.migrations ?? []).some(
       (m) =>
@@ -407,20 +433,230 @@ function dev(root, passthrough) {
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 
-function deploy(root, passthrough) {
+// ───────────────────────────── compatibility check ─────────────────────────────
+//
+// During a deployment, old and new code run side by side: a Worker on one version calls instances
+// on another, and scheduled calls saved by old code run on new code. So an action that disappears
+// or changes its parameters breaks callers that still run the previous version, and removing a
+// migration makes instances that already ran it refuse the new code. `actors deploy` and
+// `actors upload` compare the actor API with the one last shipped (recorded in actors.lock.json).
+
+const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+const CLOUDFLARE_STUB = `export const env = {};
+export class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }
+export class WorkerEntrypoint { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }
+export class WorkflowEntrypoint { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }
+export class RpcTarget {}
+export function waitUntil() {}
+export default {};`;
+
+const lockPath = (root, args) => {
+  const env = flagValue(args, "--env") ?? flagValue(args, "-e");
+  return join(root, env ? `actors.lock.${env}.json` : LOCK_FILE);
+};
+
+/** Load the actor definitions in Node (cloudflare:* modules stubbed) and describe their public API. */
+async function readApi(root, actors) {
+  const { build } = await import("esbuild");
+  const dir = mkdtempSync(join(tmpdir(), "actors-api-"));
+  try {
+    const entry = [
+      ...actors.map((a) => `export { ${a.name} } from ${JSON.stringify(join(root, a.file))};`),
+      `export { describeParams } from ${JSON.stringify(join(SRC_DIR, "shared.ts"))};`,
+    ].join("\n");
+    const outfile = join(dir, "api.mjs");
+    await build({
+      stdin: { contents: entry, resolveDir: root, loader: "ts" },
+      bundle: true,
+      format: "esm",
+      platform: "node",
+      outfile,
+      logLevel: "silent",
+      // Wrangler's default module rules.
+      loader: { ".html": "text", ".txt": "text", ".sql": "text", ".bin": "binary", ".wasm": "binary" },
+      plugins: [{
+        name: "cloudflare-stub",
+        setup(b) {
+          b.onResolve({ filter: /^cloudflare:/ }, (a) => ({ path: a.path, namespace: "cloudflare-stub" }));
+          b.onLoad({ filter: /.*/, namespace: "cloudflare-stub" }, () => ({ contents: CLOUDFLARE_STUB, loader: "js" }));
+        },
+      }],
+    });
+    const mod = await import(pathToFileURL(outfile).href);
+    // Parameter and return types come from the TypeScript compiler, when the project has it.
+    let types = {};
+    let typesSkipped = null;
+    try {
+      const r = readTypes(root, actors);
+      if (r.skipped) typesSkipped = r.skipped;
+      else types = r.types;
+    } catch (err) {
+      typesSkipped = `couldn't read types (${String(err.message ?? err).split("\n")[0]})`;
+    }
+    const api = {};
+    for (const a of actors) {
+      const cfg = mod[a.name]?.__config;
+      if (!cfg) continue;
+      api[a.name] = {
+        actions: Object.fromEntries(
+          Object.entries(cfg.actions).map(([n, fn]) => [n, { params: mod.describeParams(fn), ...(types[a.name]?.[n] ?? {}) }]),
+        ),
+        migrations: (cfg.migrations ?? []).map((m) => createHash("sha256").update(String(m)).digest("hex").slice(0, 12)),
+      };
+    }
+    return { api, typesSkipped };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Durable Object class migration tags in wrangler.jsonc. */
+function classMigrationTags(root) {
+  const path = existsSync(join(root, "wrangler.json")) ? join(root, "wrangler.json") : join(root, "wrangler.jsonc");
+  const cfg = parseJsonc(readFileSync(path, "utf8"), [], { allowTrailingComma: true }) ?? {};
+  return (cfg.migrations ?? []).map((m) => m.tag).filter(Boolean);
+}
+
+export function compareApi(prev, next) {
+  const breaking = [];
+  const notes = [];
+  const n = (k, word) => `${k} ${word}${k === 1 ? "" : "s"}`;
+  for (const [name, before] of Object.entries(prev.actors ?? {})) {
+    const after = next.actors[name];
+    if (!after) {
+      breaking.push(`Actor ${name} was removed. Callers on the previous version get "not registered" errors, and its instances' data stays but can't be reached.`);
+      continue;
+    }
+    for (const [action, was] of Object.entries(before.actions)) {
+      const now = after.actions[action];
+      if (!now) {
+        breaking.push(`${name}.${action}() was removed. Workers on the previous version, and calls it scheduled, still call it.`);
+        continue;
+      }
+      const label = `${name}.${action}()`;
+      if (was.args && now.args) {
+        // Both versions have types: compare arguments and return values structurally.
+        for (const problem of compareAction(label, was, now)) {
+          breaking.push(`${problem} Add a new action instead (e.g. ${action}V2) and remove this one later.`);
+        }
+      } else {
+        // Types unavailable on one side: fall back to counting arguments.
+        const before = Array.isArray(was) ? was : was.params;
+        const after = Array.isArray(now) ? now : now.params;
+        if (after.length !== before.length) {
+          breaking.push(
+            `${label} now takes ${n(after.length, "argument")} instead of ${before.length}. ` +
+              `Add a new action instead (e.g. ${action}V2) and remove this one later.`,
+          );
+        }
+      }
+    }
+    if (after.migrations.length < before.migrations.length) {
+      breaking.push(
+        `${name} has ${n(after.migrations.length, "migration")}; the previous version had ${before.migrations.length}. ` +
+          "Migrations are append-only: instances that already ran them refuse this code.",
+      );
+    } else {
+      before.migrations.forEach((hash, i) => {
+        if (after.migrations[i] !== hash) {
+          notes.push(
+            `${name} migrations[${i}] looks different from the one last shipped. It won't run again on instances that ran it; ` +
+              "to change their state, append a new migration instead.",
+          );
+        }
+      });
+      const added = after.migrations.length - before.migrations.length;
+      if (added > 0) notes.push(`${name}: ${n(added, "new migration")}; each instance runs ${added === 1 ? "it" : "them"} on its next call.`);
+    }
+  }
+  const newTags = (next.classMigrations ?? []).filter((t) => !(prev.classMigrations ?? []).includes(t));
+  return { breaking, notes, newClassMigrations: prev.actors ? newTags : [] };
+}
+
+/**
+ * Compare with the lock file. Returns the API to save after a successful ship.
+ * mode: "deploy" (all at once), "upload" (gradual), "check" (report only).
+ */
+async function checkCompatibility(root, actors, args, mode) {
+  let api;
+  try {
+    const read = await readApi(root, actors);
+    api = { actors: read.api, classMigrations: classMigrationTags(root) };
+    if (read.typesSkipped) console.log(c.yellow(`! Checking argument counts only: ${read.typesSkipped}.`));
+  } catch (err) {
+    console.log(c.yellow(`! Skipped the compatibility check: couldn't load the actor definitions in Node (${String(err.message ?? err).split("\n")[0]}).`));
+    return null;
+  }
+  const path = lockPath(root, args);
+  const prev = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+  if (!prev) {
+    console.log(c.dim(`No ${basename(path)} yet: nothing to compare with.${mode === "check" ? "" : " It is written after this ships."}`));
+    return api;
+  }
+  const { breaking, notes, newClassMigrations } = compareApi(prev, api);
+  for (const note of notes) console.log(`${c.cyan("◆")} ${note}`);
+  if (newClassMigrations.length) {
+    const msg = `This version adds Durable Object class migrations (${newClassMigrations.join(", ")}). They can't roll out gradually.`;
+    if (mode === "upload") throw new CliError(`${msg} Ship them with "actors deploy" first, then upload other changes.`);
+    console.log(`${c.cyan("◆")} ${msg} ${mode === "check" ? 'Ship them with "actors deploy", not "actors upload".' : ""}`);
+  }
+  if (breaking.length) {
+    const allowed = args.includes("--allow-breaking");
+    const list = breaking.map((b) => `  - ${b}`).join("\n");
+    if (!allowed) {
+      throw new CliError(
+        `Breaking changes compared with the version last shipped (${basename(path)}):\n${list}\n\n` +
+          "Callers running the previous version would fail. Keep the old actions until that version is gone, then pass " +
+          "--allow-breaking (once no Worker version that uses them is deployed and no scheduled calls to them are pending).",
+      );
+    }
+    console.log(c.yellow(`! Breaking changes, allowed by --allow-breaking:\n${list}`));
+  } else {
+    console.log(`${c.green("✓")} Compatible with the version last shipped (${basename(path)}).`);
+  }
+  return api;
+}
+
+function writeLock(root, args, api) {
+  if (!api) return;
+  const lock = {
+    note:
+      "Written by `actors deploy` / `actors upload`: the actor API last shipped. Commit it. " +
+      "The next deploy is checked against it so callers on the previous version keep working.",
+    ...api,
+  };
+  writeFileSync(lockPath(root, args), `${JSON.stringify(lock, null, 2)}\n`);
+}
+
+const OWN_FLAGS = ["--allow-breaking"];
+const wranglerArgs = (args) => args.filter((a) => !OWN_FLAGS.includes(a));
+
+async function ship(root, passthrough, mode) {
   const { actors } = generate(root);
   if (!actors.length) console.log(c.yellow("Warning: deploying with no actors defined."));
   const prod = readFileSync(join(root, PROD_ENTRY), "utf8");
   if (prod.includes("actors-poc/dev")) throw new CliError("Refusing to deploy: production entry imports dev tooling.");
-  const child = runWrangler(root, ["deploy", ...passthrough]);
+  const api = await checkCompatibility(root, actors, passthrough, mode);
+  const cmd = mode === "upload" ? ["versions", "upload"] : ["deploy"];
+  const child = runWrangler(root, [...cmd, ...wranglerArgs(passthrough)]);
   child.on("exit", (code) => {
     if (code === 0) {
-      console.log(`\n${c.green("✓")} Deployed with ${actors.length} actor type(s). The Actor Explorer is not included in production builds.`);
+      if (!passthrough.includes("--dry-run")) writeLock(root, passthrough, api);
+      console.log(
+        mode === "upload"
+          ? `\n${c.green("✓")} Uploaded. Roll it out with "npx wrangler versions deploy". Each call records the code version that ran it.`
+          : `\n${c.green("✓")} Deployed with ${actors.length} actor type(s). The Actor Explorer is not included in production builds.`,
+      );
     } else {
-      console.error(c.red(`\nwrangler deploy failed (exit ${code}). If this is an authentication error, run "npx wrangler login".`));
+      console.error(c.red(`\nwrangler ${cmd.join(" ")} failed (exit ${code}). If this is an authentication error, run "npx wrangler login".`));
     }
     process.exit(code ?? 1);
   });
+}
+
+async function check(root, args) {
+  const { actors } = generate(root, { quiet: true });
+  await checkCompatibility(root, actors, args, "check");
 }
 
 async function devApi(port, path) {
@@ -454,25 +690,37 @@ async function inspect(args) {
   const d = await devApi(port, `/actors/${encodeURIComponent(type)}/${encodeURIComponent(key)}`);
   if (args.includes("--json")) return console.log(JSON.stringify(d, null, 2));
 
-  console.log(`${c.bold(`${d.actor}("${d.key}")`)}  ${d.exists ? c.dim(`v${d.version} · created ${ago(d.createdAt)} · updated ${ago(d.updatedAt)}`) : c.yellow("not created (no committed state)")}`);
+  const schema = !d.exists ? "" : d.schema > d.latestSchema
+    ? c.red(` schema ${d.schema}: saved by newer code (this code defines ${d.latestSchema} migrations)`)
+    : d.schema < d.latestSchema ? c.yellow(` schema ${d.schema} → ${d.latestSchema} on next call`) : c.dim(` schema ${d.schema}`);
+  console.log(`${c.bold(`${d.actor}("${d.key}")`)}  ${d.exists ? c.dim(`rev ${d.version} · created ${ago(d.createdAt)} · updated ${ago(d.updatedAt)} ·`) + schema : c.yellow("not created (no committed state)")}`);
   if (d.exists) {
     console.log(`\n${c.bold("State")}${d.redacted?.length ? c.dim(` (redacted: ${d.redacted.join(", ")})`) : ""}`);
     console.log(JSON.stringify(d.state, null, 2).replace(/^/gm, "  "));
   }
   console.log(`\n${c.bold("Recent invocations")} ${c.dim(`(${d.invocations.length})`)}`);
   if (!d.invocations.length) console.log(c.dim("  none recorded"));
-  for (const inv of d.invocations.slice(0, 15)) {
+  const shown = d.invocations.slice(0, 15);
+  shown.forEach((inv, n) => {
     const mark = inv.ok ? c.green("✓") : c.red("✗");
-    const args = inv.args ? inv.args.slice(1, -1) : "…";
+    const call = inv.source === "migration"
+      ? `${c.bold("migrate")} schema ${inv.migratedFrom} → ${inv.ok ? inv.schema : "?"}`
+      : `${c.bold(inv.method)}(${inv.args ? inv.args.slice(1, -1) : "…"})`;
     const effect = inv.ok ? (inv.changed ? `changed ${inv.changedKeys.join(", ")}` : "no change") : "rolled back";
-    console.log(`  ${mark} ${c.bold(inv.method)}(${args})  ${c.dim(`${inv.durationMs}ms · ${inv.source} · ${ago(inv.ts)} · ${effect} · #${inv.invocation}`)}`);
+    const code = inv.codeVersion ? ` · code ${inv.codeVersion}` : "";
+    const skew = inv.callerVersion && inv.codeVersion && inv.callerVersion !== inv.codeVersion ? c.yellow(` called from ${inv.callerVersion}`) : "";
+    console.log(`  ${mark} ${call}  ${c.dim(`${inv.durationMs}ms · ${inv.source} · ${ago(inv.ts)} · ${effect}${code} · #${inv.invocation}`)}${skew}`);
     if (inv.error) {
       console.log(`      ${c.red(`${inv.error.name}: ${inv.error.message}`)}${inv.error.code ? c.dim(` [${inv.error.code}]`) : ""}`);
       const frames = (inv.error.stack ?? "").split("\n").slice(1, 4).map((l) => l.trim());
       for (const f of frames) console.log(c.dim(`        ${f}`));
     }
     for (const l of inv.logs) console.log(c.dim(`      log: ${l}`));
-  }
+    const older = shown[n + 1];
+    if (older?.codeVersion && inv.codeVersion && older.codeVersion !== inv.codeVersion) {
+      console.log(c.dim(`  ── new code version: ${older.codeVersion} → ${inv.codeVersion} ──`));
+    }
+  });
   if (d.schedules.length) {
     console.log(`\n${c.bold("Scheduled")}`);
     for (const s of d.schedules) console.log(`  ${s.action}(${JSON.stringify(s.args).slice(1, -1)}) ${c.dim(`at ${new Date(s.at).toLocaleTimeString()}`)}`);
@@ -483,7 +731,7 @@ async function inspect(args) {
     return;
   }
   console.log(`\n${c.bold("Storage")}  state ${d.storage.stateBytes} B · SQLite ${d.storage.databaseSizeBytes} B`);
-  console.log(`${c.bold("Runtime")}  instance started ${ago(L.instanceStartedAt)} · ${L.activeAction ? `running ${L.activeAction.method} for ${Math.round((Date.now() - L.activeAction.since) / 1000)}s` : "idle"} · ${L.queuedActions} queued · next alarm ${L.nextAlarm ? new Date(L.nextAlarm).toLocaleTimeString() : "none"}`);
+  console.log(`${c.bold("Runtime")}  code ${L.codeVersion} · instance started ${ago(L.instanceStartedAt)} · ${L.activeAction ? `running ${L.activeAction.method} for ${Math.round((Date.now() - L.activeAction.since) / 1000)}s` : "idle"} · ${L.queuedActions} queued · next alarm ${L.nextAlarm ? new Date(L.nextAlarm).toLocaleTimeString() : "none"}`);
   console.log(c.dim(`         DO id ${L.durableObjectId} · persisted data read via Wrangler's Local Explorer`));
   if (L.connections?.length) {
     console.log(`${c.bold("Connections")} ${L.connections.length} open`);
@@ -500,7 +748,8 @@ async function list(args) {
     const mine = instances.filter((i) => i.actor === t.name);
     if (!mine.length) console.log(c.dim("  (no instances observed)"));
     for (const i of mine) {
-      const stats = i.invocations === null ? "stats skipped" : `${i.invocations} recent calls · ${i.errors} errors${i.lastSeen ? ` · last ${ago(i.lastSeen)}` : ""}`;
+      const stats = i.invocations === null ? "stats skipped" : `${i.invocations} recent calls · ${i.errors} errors${i.lastSeen ? ` · last ${ago(i.lastSeen)}` : ""}` +
+        `${i.schema != null ? ` · schema ${i.schema}` : ""}${i.codeVersion ? ` · code ${i.codeVersion}` : ""}`;
       console.log(`  ${i.key}  ${c.dim(stats)}`);
     }
   }
@@ -517,12 +766,15 @@ const HELP = `${c.bold("actors")} — Actors on Cloudflare (PoC)
 
   actors generate               Discover actors and write config (.actors/, wrangler.jsonc)
   actors dev [wrangler args]    Run locally; Actor Explorer at /__actors
-  actors deploy [wrangler args] Deploy with Wrangler (e.g. --dry-run)
+  actors deploy [wrangler args] Check compatibility, then deploy with Wrangler (e.g. --dry-run)
+  actors upload [wrangler args] Check compatibility, then upload a version for a gradual deployment
+  actors check                  Compare actor APIs and migrations with the version last shipped
   actors inspect <Type> <key>   Show an actor's state, activity and errors (needs actors dev)
   actors list                   List actor types and observed instances (needs actors dev)
 
 Options: --cwd <dir>   project directory (default: current)
          --port <n>    dev server port for inspect/list (default 8787)
+         --allow-breaking  deploy/upload even if callers on the previous version would break
 `;
 
 async function main() {
@@ -534,7 +786,9 @@ async function main() {
   switch (cmd) {
     case "generate": return void generate(root);
     case "dev": return dev(root, rest);
-    case "deploy": return deploy(root, rest);
+    case "deploy": return ship(root, rest, "deploy");
+    case "upload": return ship(root, rest, "upload");
+    case "check": return check(root, rest);
     case "inspect": return inspect(rest);
     case "list": case "ls": return list(rest);
     case undefined: case "help": case "--help": case "-h": return console.log(HELP);

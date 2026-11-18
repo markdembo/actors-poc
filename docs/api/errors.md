@@ -11,7 +11,7 @@ Every failed call through an actor reference rejects with an `ActorError`.
 
 | Property | Type | Description |
 |---|---|---|
-| `kind` | `"action" \| "validation" \| "config" \| "transport" \| "timeout"` | What went wrong. Refer to the table below. |
+| `kind` | `"action" \| "validation" \| "config" \| "transport" \| "timeout" \| "version"` | What went wrong. Refer to the table below. |
 | `code` | `string \| undefined` | The `code` property of the error the action threw, if it had one. |
 | `actor`, `key`, `method` | `string \| undefined` | Which call failed. |
 | `remoteName` | `string \| undefined` | The original error's name inside the actor, such as `"TypeError"`. |
@@ -27,6 +27,7 @@ Every failed call through an actor reference rejects with an `ActorError`.
 | `config` | Unknown actor or action, missing binding, bad key | No (never ran) | A bug or a stale build: run `actors generate` |
 | `transport` | The call failed in transit, for example an overloaded instance | **Unknown** | Retry only if `retryable` and the action is idempotent |
 | `timeout` | `timeoutMs` passed | **Unknown, usually yes** | Don't assume failure; read state or deduplicate |
+| `version` | Code and state, or caller and actor, are from different versions: the state was saved by newer code, a migration failed, or the caller asked for an action this version doesn't have | No | Deploy forward. Refer to [Changing actors safely](../best-practices/changing-actors.md) |
 
 ## Throwing errors with a code
 

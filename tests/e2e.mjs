@@ -68,6 +68,8 @@ async function stop(proc) {
   await new Promise((r) => setTimeout(r, 300));
 }
 
+const shape = async (key, method, args = []) =>
+  (await fetch(`${base}/shape/${encodeURIComponent(key)}/${method}`, { method: "POST", body: JSON.stringify(args) })).json();
 const call = async (key, method, args = [], query = "") =>
   (await fetch(`${base}/call/${encodeURIComponent(key)}/${method}${query}`, { method: "POST", body: JSON.stringify(args) })).json();
 const api = async (path, init) => (await fetch(`${base}/__actors/api${path}`, init)).json();
@@ -171,7 +173,7 @@ async function main() {
 
   await test("FR6: explorer lists types/instances, inspects state, invokes, redacts", async () => {
     const types = await api("/types");
-    assert.deepEqual(types.map((t) => t.name), ["Probe", "Room"]);
+    assert.deepEqual(types.map((t) => t.name), ["Probe", "Room", "Shape"]);
     assert.ok(types[0].actions.find((a) => a.name === "add").params[0].startsWith("by"));
     const inst = await api("/instances");
     assert.ok(inst.some((i) => i.actor === "Probe" && i.key === k && i.errors >= 1));
@@ -358,6 +360,17 @@ async function main() {
     assert.equal(r.stdout, "403");
   });
 
+  await test("versions: a caller on another code version gets a version error naming both versions", async () => {
+    const r = await (await fetch(`${base}/skew/${encodeURIComponent(k)}/removedAction`)).json();
+    assert.equal(r.ok, false);
+    assert.equal(r.error.kind, "version");
+    assert.match(r.error.message, /no action "removedAction"/);
+    assert.match(r.error.message, /caller runs code version other-version/);
+    const inv = (await api(`/actors/Probe/${k}`)).invocations[0];
+    assert.equal(inv.callerVersion, "other-version");
+    assert.ok(inv.codeVersion && inv.codeVersion !== "other-version", "the instance records its own code version");
+  });
+
   console.log("restart (same persisted store)");
   await stop(server);
   server = start(process.execPath, [cli, "dev", "--port", String(PORT), "--persist-to", persist]);
@@ -396,6 +409,85 @@ async function main() {
     const d = await api(`/actors/Probe/prod-${run}`);
     assert.equal(d.state.n, 2);
     assert.equal(d.invocations.length, 0, "production instrumentation records errors only");
+  });
+
+  // ── Migrations: the same stored data under code with 0, 2, 1 and 3 migrations (--define FIXTURE_SHAPE).
+  const devWithShape = async (n) => {
+    await stop(server);
+    console.log(`actors dev with ${n} migration(s) on Shape`);
+    server = start(process.execPath, [cli, "dev", "--port", String(PORT), "--persist-to", persist, "--define", `FIXTURE_SHAPE:${n}`]);
+    await waitReady(server);
+  };
+  const sk = `shape-${run}`;
+  await devWithShape(0);
+
+  await test("migrations: code without migrations stores schema 0", async () => {
+    assert.deepEqual((await shape(sk, "add", [5])).value, { count: 5 });
+    const d = await api(`/actors/Shape/${sk}`);
+    assert.equal(d.schema, 0);
+    assert.equal(d.latestSchema, 0);
+  });
+  const v0 = (await api(`/actors/Shape/${sk}`)).invocations[0]?.codeVersion;
+
+  await devWithShape(2);
+
+  await test("migrations: old state migrates lazily, in order, on the first call after a deploy", async () => {
+    const before = await api(`/actors/Shape/${sk}`);
+    assert.equal(before.schema, 0, "nothing runs until the instance is called");
+    assert.equal(before.latestSchema, 2);
+    assert.deepEqual((await shape(sk, "get")).value, { total: 5, currency: "USD", tags: [] });
+    assert.deepEqual((await shape(sk, "audit")).value, ["migration 2"], "ctx.sql changes from a migration commit");
+    const d = await api(`/actors/Shape/${sk}`);
+    assert.equal(d.schema, 2);
+    const migration = d.invocations.find((i) => i.source === "migration");
+    assert.ok(migration, "the migration is logged as its own entry");
+    assert.equal(migration.ok, true);
+    assert.equal(migration.migratedFrom, 0);
+    assert.equal(migration.schema, 2);
+    assert.deepEqual(migration.changedKeys, ["count", "currency", "tags", "total"]);
+    assert.ok(v0 && migration.codeVersion && migration.codeVersion !== v0, "each entry records the code version that ran it");
+  });
+
+  await test("migrations: new instances start at the latest schema without migrating", async () => {
+    assert.deepEqual((await shape(`${sk}-new`, "add", [1])).value, { total: 1, currency: "USD", tags: [] });
+    const d = await api(`/actors/Shape/${sk}-new`);
+    assert.equal(d.schema, 2);
+    assert.ok(!d.invocations.some((i) => i.source === "migration"));
+  });
+
+  await devWithShape(1);
+
+  await test("migrations: older code refuses state saved by newer code and changes nothing", async () => {
+    const r = await shape(sk, "add", [1]);
+    assert.equal(r.ok, false);
+    assert.equal(r.error.kind, "version");
+    assert.match(r.error.message, /saved by newer code: its state has run 2 migrations, but this code version \(\w+\) defines 1/);
+    const d = await api(`/actors/Shape/${sk}`);
+    assert.equal(d.schema, 2);
+    assert.equal(d.state.total, 5);
+  });
+
+  await devWithShape(3);
+
+  await test("migrations: a failing migration rolls back state and its ctx.sql writes, and retries on the next call", async () => {
+    for (let i = 0; i < 2; i++) {
+      const r = await shape(sk, "get");
+      assert.equal(r.ok, false);
+      assert.equal(r.error.kind, "version");
+      assert.match(r.error.message, /from schema 2 to 3 failed at migrations\[2\]: migration 3 is broken/);
+    }
+    const d = await api(`/actors/Shape/${sk}`);
+    assert.equal(d.schema, 2);
+    assert.equal(d.state.total, 5);
+    const failed = d.invocations.filter((i) => i.source === "migration" && !i.ok);
+    assert.equal(failed.length, 2);
+    assert.equal(failed[0].error.kind, "version");
+  });
+
+  await devWithShape(2);
+
+  await test("migrations: the audit table only has the committed migration's row", async () => {
+    assert.deepEqual((await shape(sk, "audit")).value, ["migration 2"]);
   });
 
   await stop(server);
@@ -445,6 +537,40 @@ async function main() {
     assert.equal(r.status, 1);
     assert.match(r.stderr, /"ChatRoom" would get the binding "CHAT_ROOM", but that name is already used by KV binding/);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test("versions: actors check flags removed actions, changed arguments and removed migrations", async () => {
+    const lock = join(fixture, "actors.lock.json");
+    const run = (...args) => spawnSync(process.execPath, [cli, "check", ...args], { cwd: fixture, encoding: "utf8" });
+    try {
+      assert.equal(run().status, 0, "no lock: nothing to compare");
+      writeFileSync(lock, JSON.stringify({
+        actors: {
+          Probe: { actions: { add: ["by"], gone: [], get: ["extra"] }, migrations: [] },
+          Shape: { actions: { add: ["n"], get: [], audit: [] }, migrations: ["a", "b", "c"] },
+          Removed: { actions: {}, migrations: [] },
+        },
+        classMigrations: ["actors-v1"],
+      }));
+      const r = run();
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /Probe\.gone\(\) was removed/);
+      assert.match(r.stderr, /Probe\.get\(\) now takes 0 arguments instead of 1/);
+      assert.match(r.stderr, /Shape has 2 migrations; the previous version had 3/);
+      assert.match(r.stderr, /Actor Removed was removed/);
+      assert.match(run("--allow-breaking").stdout, /allowed by --allow-breaking/);
+      writeFileSync(lock, JSON.stringify({
+        actors: { Shape: { actions: { add: ["n"], get: [], audit: [] }, migrations: ["edited"] } },
+        classMigrations: ["actors-v1"],
+      }));
+      const ok = run();
+      assert.equal(ok.status, 0, ok.stderr);
+      assert.match(ok.stdout, /Shape migrations\[0\] looks different/);
+      assert.match(ok.stdout, /Shape: 1 new migration/);
+      assert.match(ok.stdout, /adds Durable Object class migrations \(actors-do-Ledger\)/);
+    } finally {
+      rmSync(lock, { force: true });
+    }
   });
 
   await test("FR5: generate is deterministic (second run changes nothing)", async () => {

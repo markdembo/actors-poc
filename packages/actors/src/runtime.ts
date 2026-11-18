@@ -6,7 +6,8 @@
  * named "<Type>:<key>", so different actor types never share an instance.
  *
  * Storage layout (SQLite, per instance):
- *   _actor_state     one row: type, key, JSON state document, version, timestamps
+ *   _actor_state     one row: type, key, JSON state document, version (commit counter),
+ *                    schema (how many of the actor's migrations it has run), timestamps
  *   _actor_log       ring buffer of recent invocations (instrumentation)
  *   _actor_schedule  pending scheduled actions (driven by the DO alarm)
  */
@@ -14,6 +15,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { ActionContext, AnyActor, BroadcastOptions, Connection, ConnectionInfo } from "./index.ts";
 import {
   ActorError,
+  codeVersion,
   describeParams,
   findJsonProblem,
   HEADER_ACTOR,
@@ -38,12 +40,16 @@ const LOG_LIMIT = 100;
 const MAX_STATE_BYTES = 2_000_000; // Conservative PoC limit (Durable Objects SQLite allows 8 MB per value); every change rewrites the whole document
 const MAX_SCHEDULE_ATTEMPTS = 3;
 const ARG_PREVIEW_CHARS = 2_000;
+/** A scheduled action that fails because of a version mismatch waits this long and is not counted as an attempt. */
+const VERSION_RETRY_MS = 60_000;
 
 interface StateRow {
   actor: string;
   key: string;
   json: string;
   version: number;
+  /** How many of the actor's migrations this state has run. */
+  schema: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -90,6 +96,14 @@ export interface InvocationRecord {
   changed: boolean;
   changedKeys: string[];
   version: number;
+  /** State schema after this invocation (number of migrations run). */
+  schema: number;
+  /** Set on migration entries: the schema the state had before. */
+  migratedFrom: number | null;
+  /** Code version that ran this invocation (version tag, or the start of the version id). */
+  codeVersion: string | null;
+  /** Code version of the Worker that made the call, when it sent one. */
+  callerVersion: string | null;
   error: SerializedError | null;
   logs: string[];
 }
@@ -97,6 +111,8 @@ export interface InvocationRecord {
 /** Live diagnostics only the running instance knows. Persisted data is read through Wrangler's Local Explorer. */
 export interface RuntimeInfo {
   durableObjectId: string;
+  /** Code version this instance is running now. */
+  codeVersion: string;
   instanceStartedAt: number;
   activeAction: { method: string; since: number } | null;
   queuedActions: number;
@@ -112,6 +128,10 @@ export interface InspectResult {
   state?: unknown;
   redacted?: string[];
   version?: number;
+  /** Migrations this state has run. */
+  schema?: number;
+  /** Migrations the actor's current code defines. Less than `schema`: saved by newer code. More: migrates on its next call. */
+  latestSchema: number;
   createdAt?: number;
   updatedAt?: number;
   invocations: InvocationRecord[];
@@ -127,6 +147,8 @@ export interface ActorTypeInfo {
   name: string;
   actions: { name: string; params: string[] }[];
   hasOnCreate: boolean;
+  /** Number of migrations: the schema new and migrated instances are at. */
+  schema: number;
   redact: { state: string[]; args: string[] };
 }
 
@@ -145,6 +167,7 @@ export function describeActors(registry: Record<string, AnyActor>): ActorTypeInf
       name,
       actions: Object.entries(def.__config.actions).map(([a, fn]) => ({ name: a, params: describeParams(fn) })),
       hasOnCreate: typeof def.__config.onCreate === "function",
+      schema: def.__config.migrations?.length ?? 0,
       redact: {
         state: (def.__config.redact?.state ?? []) as string[],
         args: (def.__config.redact?.args ?? []) as string[],
@@ -164,12 +187,14 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
     #row: StateRow | null | undefined; // undefined = not loaded yet
     readonly #startedAt = Date.now();
     readonly #level: InstrumentationLevel;
+    readonly #code: string;
 
     constructor(ctx: DurableObjectState, env: Record<string, unknown>) {
       super(ctx, env);
       const lvl = env.ACTORS_INSTRUMENTATION;
       this.#level =
         lvl === "all" || lvl === "errors" || lvl === "off" ? lvl : (options.instrumentation ?? (dev ? "all" : "errors"));
+      this.#code = codeVersion(env);
       this.#ensureTables();
     }
 
@@ -187,6 +212,14 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       sql.exec(`CREATE TABLE IF NOT EXISTS _actor_schedule (
         id TEXT PRIMARY KEY, at INTEGER NOT NULL, action TEXT NOT NULL,
         args TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)`);
+      // Columns added after the first release. Instances created before have none of them.
+      addColumns(sql, "_actor_state", { schema: "INTEGER NOT NULL DEFAULT 0" });
+      addColumns(sql, "_actor_log", {
+        schema: "INTEGER",
+        migrated_from: "INTEGER",
+        code_version: "TEXT",
+        caller_version: "TEXT",
+      });
     }
 
     // ───────────────────────────── public RPC ─────────────────────────────
@@ -205,6 +238,7 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       this.#requireDev();
       return {
         durableObjectId: this.ctx.id.toString(),
+        codeVersion: this.#code,
         instanceStartedAt: this.#startedAt,
         activeAction: this.#active,
         queuedActions: Math.max(0, this.#queued - (this.#active ? 1 : 0)),
@@ -385,6 +419,7 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
             key: String(r.key),
             json: String(r.state),
             version: Number(r.version),
+            schema: Number(r.schema ?? 0),
             createdAt: Number(r.created_at),
             updatedAt: Number(r.updated_at),
           }
@@ -399,11 +434,11 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       const scheduleOps: ScheduleOp[] = [];
       const outbox: Outgoing[] = [];
       const def = registry[req.actor];
-      const row = this.#load();
+      let row = this.#load();
 
       const fail = (error: SerializedError, changedKeys: string[] = []): InvokeResult => {
-        this.#record(req, invocation, started, logs, false, false, changedKeys, row?.version ?? 0, error);
-        if (scheduleId) this.#scheduleFailed(scheduleId);
+        this.#record(req, invocation, started, logs, false, false, changedKeys, row?.version ?? 0, row?.schema ?? 0, null, error);
+        if (scheduleId) this.#scheduleFailed(scheduleId, error.kind === "version");
         return { ok: false, error };
       };
 
@@ -423,10 +458,16 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
           ? def.__config.actions[req.method]
           : undefined;
       if (!action) {
+        const skew = req.callerVersion && req.callerVersion !== this.#code;
         return fail({
           name: "ActorError",
-          kind: "config",
-          message: `Actor "${req.actor}" has no action "${req.method}". Available: ${Object.keys(def.__config.actions).join(", ")}`,
+          kind: skew ? "version" : "config",
+          message:
+            `Actor "${req.actor}" has no action "${req.method}". Available: ${Object.keys(def.__config.actions).join(", ")}` +
+            (skew
+              ? `. The caller runs code version ${req.callerVersion}, this instance runs ${this.#code}: during a gradual ` +
+                "deployment, keep an action until no Worker version that calls it is still deployed."
+              : ""),
         });
       }
       if (row && (row.actor !== req.actor || row.key !== req.key)) {
@@ -437,11 +478,29 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
         });
       }
 
+      // Bring old state up to this code's schema, or refuse state that newer code saved.
+      const latest = def.__config.migrations?.length ?? 0;
+      if (row && row.schema > latest) {
+        return fail({
+          name: "ActorError",
+          kind: "version",
+          message:
+            `${req.actor}("${req.key}") was saved by newer code: its state has run ${row.schema} migrations, but this code ` +
+            `version (${this.#code}) defines ${latest}. Nothing was changed. Migrations only go forward: instead of ` +
+            "rolling back, deploy a version that keeps all of them (fix the problem with another migration if needed).",
+        });
+      }
+      if (row && row.schema < latest) {
+        const migrated = this.#migrate(def, req, row, latest);
+        if (!migrated.ok) return fail(migrated.error);
+        row = migrated.row;
+      }
+
       // 1. Build a private draft. JSON.parse of the committed document is a deep copy.
       const creating = !row;
       let draft: unknown;
       try {
-        draft = creating ? initialState(def, req.key) : JSON.parse(row.json);
+        draft = row ? JSON.parse(row.json) : initialState(def, req.key);
       } catch (err) {
         return fail(serializeError(err, "action"));
       }
@@ -485,19 +544,14 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       }
 
       // 4. Commit atomically: state + schedules + log row in one SQLite transaction.
-      const changed = creating || json !== row.json;
-      const changedKeys = changed ? diffTopLevel(creating ? undefined : row.json, json) : [];
+      const changed = !row || json !== row.json;
+      const changedKeys = changed ? diffTopLevel(row?.json, json) : [];
       const now = Date.now();
       const version = changed ? (row?.version ?? 0) + 1 : row!.version;
+      const schema = row?.schema ?? latest; // new instances start at the latest schema
       const sql = this.ctx.storage.sql;
       this.ctx.storage.transactionSync(() => {
-        if (changed) {
-          sql.exec(
-            `INSERT INTO _actor_state (id, actor, key, state, version, created_at, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET state = excluded.state, version = excluded.version, updated_at = excluded.updated_at`,
-            req.actor, req.key, json, version, row?.createdAt ?? now, now,
-          );
-        }
+        if (changed) this.#writeState(req, json, version, schema, row?.createdAt ?? now, now);
         for (const op of scheduleOps) {
           if (op.op === "add") {
             sql.exec(`INSERT INTO _actor_schedule (id, at, action, args) VALUES (?, ?, ?, ?)`, op.id, op.at, op.action, op.args);
@@ -506,15 +560,79 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
           }
         }
         if (scheduleId) sql.exec(`DELETE FROM _actor_schedule WHERE id = ?`, scheduleId);
-        this.#record(req, invocation, started, logs, true, changed, changedKeys, version, null);
+        this.#record(req, invocation, started, logs, true, changed, changedKeys, version, schema, null, null);
       });
       if (changed) {
-        this.#row = { actor: req.actor, key: req.key, json, version, createdAt: row?.createdAt ?? now, updatedAt: now };
+        this.#row = { actor: req.actor, key: req.key, json, version, schema, createdAt: row?.createdAt ?? now, updatedAt: now };
       }
       hook?.afterCommit?.();
       this.#flush(outbox); // only now: rolled-back invocations never reach clients
       if (scheduleOps.length > 0) await this.#rearm();
       return { ok: true, value };
+    }
+
+    #writeState(req: InvokeRequest, json: string, version: number, schema: number, createdAt: number, now: number) {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO _actor_state (id, actor, key, state, version, schema, created_at, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET state = excluded.state, version = excluded.version, schema = excluded.schema,
+           updated_at = excluded.updated_at`,
+        req.actor, req.key, json, version, schema, createdAt, now,
+      );
+    }
+
+    /**
+     * Run the migrations this state hasn't run yet, in one synchronous transaction of their own:
+     * state, schema and any ctx.sql changes commit together, or nothing does. Logged as its own entry.
+     */
+    #migrate(
+      def: AnyActor,
+      req: InvokeRequest,
+      row: StateRow,
+      latest: number,
+    ): { ok: true; row: StateRow } | { ok: false; error: SerializedError } {
+      const started = Date.now();
+      const invocation = crypto.randomUUID().slice(0, 8);
+      const entry: InvokeRequest = { ...req, method: "migrate", args: [], source: "migration" };
+      const migrations = def.__config.migrations ?? [];
+      const sql = this.ctx.storage.sql;
+      let step = row.schema;
+      try {
+        let state: unknown = JSON.parse(row.json);
+        const next = this.ctx.storage.transactionSync(() => {
+          for (; step < latest; step++) {
+            const out: unknown = migrations[step](state, { actor: req.actor, key: req.key, sql });
+            if (out && typeof (out as { then?: unknown }).then === "function") {
+              throw new ActorError("it returned a Promise. Migrations must be synchronous: no await, fetch or calls to other actors.");
+            }
+            if (out === undefined) throw new ActorError("it returned undefined. Return the new state.");
+            state = out;
+          }
+          const problem = findJsonProblem(state);
+          if (problem) throw new ActorError(`the result is not valid state: ${problem}.`);
+          def.__config.validate?.(state);
+          const json = JSON.stringify(state);
+          const now = Date.now();
+          const r: StateRow = { ...row, json, version: row.version + 1, schema: latest, updatedAt: now };
+          this.#writeState(req, json, r.version, latest, row.createdAt, now);
+          const changedKeys = diffTopLevel(row.json, json);
+          this.#record(entry, invocation, started, [], true, true, changedKeys, r.version, latest, row.schema, null);
+          return r;
+        });
+        this.#row = next;
+        return { ok: true, row: next };
+      } catch (err) {
+        const e = serializeError(err, "version");
+        const failed = step < latest ? `migrations[${step}]` : "validating the migrated state";
+        const error: SerializedError = {
+          ...e,
+          kind: "version",
+          message:
+            `Migrating ${req.actor}("${req.key}") from schema ${row.schema} to ${latest} failed at ${failed}: ${e.message} ` +
+            "Nothing was changed; the migration runs again on the next call. Fix it by deploying a corrected migration.",
+        };
+        this.#record(entry, invocation, started, [], false, false, [], row.version, row.schema, row.schema, error);
+        return { ok: false, error };
+      }
     }
 
     #context(
@@ -576,25 +694,35 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       changed: boolean,
       changedKeys: string[],
       version: number,
+      schema: number,
+      migratedFrom: number | null,
       error: SerializedError | null,
     ) {
-      if (this.#level === "off" || (this.#level === "errors" && ok)) return;
+      // Migrations are rare and worth seeing: logged unless instrumentation is off.
+      if (this.#level === "off" || (this.#level === "errors" && ok && migratedFrom === null)) return;
       const sql = this.ctx.storage.sql;
       const secretArgs = (registry[req.actor]?.__config.redact?.args ?? []) as string[];
       const args = !dev ? null : secretArgs.includes(req.method) ? '["[redacted]"]' : truncate(safeJson(req.args ?? []), ARG_PREVIEW_CHARS);
       sql.exec(
-        `INSERT INTO _actor_log (inv, ts, method, source, args, duration_ms, ok, changed, changed_keys, version, error, logs)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO _actor_log (inv, ts, method, source, args, duration_ms, ok, changed, changed_keys, version, error, logs,
+           schema, migrated_from, code_version, caller_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         invocation, started, req.method, req.source, args, Date.now() - started, ok ? 1 : 0, changed ? 1 : 0,
         JSON.stringify(changedKeys), version, error ? JSON.stringify(error) : null, JSON.stringify(logs.slice(0, 50)),
+        schema, migratedFrom, this.#code, req.callerVersion ?? null,
       );
       sql.exec(`DELETE FROM _actor_log WHERE id <= (SELECT MAX(id) FROM _actor_log) - ?`, LOG_LIMIT);
     }
 
-    #scheduleFailed(id: string) {
+    #scheduleFailed(id: string, versionMismatch = false) {
       const sql = this.ctx.storage.sql;
       const r = sql.exec(`SELECT attempts FROM _actor_schedule WHERE id = ?`, id).toArray()[0];
       if (!r) return;
+      if (versionMismatch) {
+        // Wrong code version for this state or action (e.g. after a rollback): wait for a deploy, don't use up attempts.
+        sql.exec(`UPDATE _actor_schedule SET at = ? WHERE id = ?`, Date.now() + VERSION_RETRY_MS, id);
+        return;
+      }
       const attempts = Number(r.attempts) + 1;
       if (attempts >= MAX_SCHEDULE_ATTEMPTS) {
         sql.exec(`DELETE FROM _actor_schedule WHERE id = ?`, id);
@@ -610,6 +738,14 @@ export function createHost(registry: Record<string, AnyActor>, options: HostOpti
       else await this.ctx.storage.setAlarm(at);
     }
   };
+}
+
+/** Add columns that don't exist yet (tables created by an older runtime). */
+function addColumns(sql: SqlStorage, table: string, columns: Record<string, string>) {
+  const have = new Set(sql.exec(`SELECT name FROM pragma_table_info(?)`, table).toArray().map((r) => String(r.name)));
+  for (const [name, type] of Object.entries(columns)) {
+    if (!have.has(name)) sql.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
 }
 
 function attachmentOf(ws: WebSocket): Attachment | null {
@@ -671,6 +807,10 @@ export function toInvocationRecord(r: Record<string, SqlStorageValue>): Invocati
     changed: Number(r.changed) === 1,
     changedKeys: JSON.parse(String(r.changed_keys)),
     version: Number(r.version),
+    schema: r.schema == null ? 0 : Number(r.schema),
+    migratedFrom: r.migrated_from == null ? null : Number(r.migrated_from),
+    codeVersion: r.code_version == null ? null : String(r.code_version),
+    callerVersion: r.caller_version == null ? null : String(r.caller_version),
     error: r.error == null ? null : JSON.parse(String(r.error)),
     logs: JSON.parse(String(r.logs)),
   };

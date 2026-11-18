@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changing actors safely · Actors (unofficial PoC)</title>
+<meta name="description" content="Actors live longer than your code. Every deploy meets state that older code saved. During a deploy, two versions of your code also run side by side. This page covers both. You need one new idea, migrations, and one rule: only go forward.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../assets/style.css">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  <a class="brand" href="../index.html"><span class="brand-mark" aria-hidden="true">◇</span>Actors<span class="badge">Unofficial PoC</span></a>
+  <span class="spacer"></span>
+  <a class="top-link" href="https://github.com/markdembo/actors-poc" target="_blank" rel="noopener">GitHub ↗</a>
+  <button class="theme-toggle" type="button" aria-label="Toggle dark mode">◐</button>
+</header>
+<div class="disclaimer" role="note"><strong>Unofficial, AI-generated proof of concept.</strong> Not Cloudflare documentation, not affiliated with or endorsed by Cloudflare, and not supported.</div>
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation"><div class="nav-section"><ul><li><a href="../index.html">Overview</a></li><li><a href="../get-started.html">Get started</a></li></ul></div><div class="nav-section"><p class="nav-title">Concepts</p><ul><li><a href="../concepts/what-are-actors.html">What are actors?</a></li><li><a href="../concepts/how-actors-work.html">How actors work</a></li></ul></div><div class="nav-section"><p class="nav-title">Tutorials</p><ul><li><a href="../tutorials/build-a-chat-room.html">Build a chat room</a></li><li><a href="../tutorials/build-an-ai-agent.html">Build a persistent AI agent</a></li></ul></div><div class="nav-section"><p class="nav-title">Best practices</p><ul><li><a href="rules-of-actors.html">Rules of actors</a></li><li><a href="websockets.html">WebSockets</a></li><li><a href="changing-actors.html" aria-current="page" class="active">Changing actors safely</a></li></ul></div><div class="nav-section"><p class="nav-title">API</p><ul><li><a href="../api/index.html">API reference</a></li><li><a href="../api/actor.html">actor()</a></li><li><a href="../api/action-context.html">Action context</a></li><li><a href="../api/connections.html">Connections</a></li><li><a href="../api/errors.html">Errors</a></li><li><a href="../api/durable.html">Custom classes</a></li></ul></div><div class="nav-section"><p class="nav-title">Reference</p><ul><li><a href="../reference/cli.html">CLI</a></li><li><a href="../reference/configuration.html">Configuration</a></li><li><a href="../reference/limits.html">Limits</a></li><li><a href="../semantics.html">Semantics</a></li></ul></div><div class="nav-section"><p class="nav-title">About</p><ul><li><a href="../findings.html">Findings</a></li></ul></div></nav>
+  <main class="content">
+    <p class="crumb">Best practices</p>
+    <article><h1>Changing actors safely</h1>
+<aside class="callout callout-warning" role="note"><p class="callout-title">Warning</p><p><strong>Unofficial, AI-generated proof of concept.</strong> This is not Cloudflare documentation, and the project has no support. Read the <a href="https://github.com/markdembo/actors-poc/blob/main/README.md" target="_blank" rel="noopener">warning in the project README</a> before using any of it.</p>
+</aside>
+<p>Actors live longer than your code. Every deploy meets state that older code saved. During a deploy, two versions of your code also run side by side. This page covers both. You need one new idea, <code>migrations</code>, and one rule: <strong>only go forward</strong>.</p>
+<h2 id="change-the-shape-of-state-with-migrations"><a class="anchor" href="#change-the-shape-of-state-with-migrations" aria-label="Link to this section">#</a>Change the shape of state with migrations</h2>
+<p>Add <code>migrations</code> to the actor: a list of functions that each take the old state and return the new one. Always add new migrations to the end of the list.</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-keyword">export</span> <span class="hljs-keyword">const</span> <span class="hljs-title class_">Cart</span> = <span class="hljs-title function_">actor</span>({
+  <span class="hljs-comment">// The current shape. New carts start here and never run a migration.</span>
+  <span class="hljs-attr">state</span>: { <span class="hljs-attr">items</span>: [] <span class="hljs-keyword">as</span> <span class="hljs-title class_">Item</span>[], <span class="hljs-attr">currency</span>: <span class="hljs-string">&quot;USD&quot;</span> },
+  <span class="hljs-attr">migrations</span>: [
+    <span class="hljs-comment">// 1: `lines` was renamed to `items`</span>
+    <span class="hljs-function">(<span class="hljs-params">{ lines, ...s }</span>) =&gt;</span> ({ ...s, <span class="hljs-attr">items</span>: lines }),
+    <span class="hljs-comment">// 2: carts gained a currency</span>
+    <span class="hljs-function">(<span class="hljs-params">s</span>) =&gt;</span> ({ ...s, <span class="hljs-attr">currency</span>: <span class="hljs-string">&quot;USD&quot;</span> }),
+  ],
+  <span class="hljs-attr">actions</span>: {
+    <span class="hljs-attr">add</span>: <span class="hljs-function">(<span class="hljs-params">{ state }, <span class="hljs-attr">item</span>: <span class="hljs-title class_">Item</span></span>) =&gt;</span> <span class="hljs-built_in">void</span> state.<span class="hljs-property">items</span>.<span class="hljs-title function_">push</span>(item),
+  },
+});</code></pre></figure>
+<p>How migrations run:</p>
+<ul>
+<li><strong>Lazily.</strong> An instance runs the migrations it hasn&#39;t run yet the first time it&#39;s called after a deploy. Instances that nobody calls keep their old state until someone does. No job has to visit every instance, so it works for millions of them.</li>
+<li><strong>In order, once each.</strong> Each instance stores how many migrations it has run (its <em>schema</em>). New instances start at the latest schema.</li>
+<li><strong>In one transaction, before the action.</strong> The state, the new schema and any <code>ctx.sql</code> changes the migrations make are saved together, or nothing is saved. The action then runs on the migrated state.</li>
+<li><strong>Synchronously.</strong> A migration can&#39;t <code>await</code>, call <code>fetch</code> or call other actors. To transform data with I/O, do it in an action.</li>
+<li><strong>Checked like any commit.</strong> The result must be plain JSON and pass <code>validate</code>.</li>
+</ul>
+<p>If a migration throws, nothing changes and the call fails with an <code>ActorError</code> of kind <code>version</code>. The next call tries again. Fix it by deploying a corrected migration.</p>
+<p>A migration also receives <code>{ actor, key, sql }</code>, so it can change your own tables in the same transaction:</p>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-typescript"><span class="hljs-attr">migrations</span>: [
+  <span class="hljs-function">(<span class="hljs-params">s, { sql }</span>) =&gt;</span> {
+    sql.<span class="hljs-title function_">exec</span>(<span class="hljs-string">&quot;ALTER TABLE messages ADD COLUMN edited_at INTEGER&quot;</span>);
+    <span class="hljs-keyword">return</span> s;
+  },
+],</code></pre></figure>
+<aside class="callout callout-note" role="note"><p class="callout-title">Note</p><p>Never edit, reorder or remove a migration that has shipped. Instances that already ran it won&#39;t run it again, and instances that haven&#39;t will run your edited version. To change state again, append another migration. <code>actors deploy</code> warns when a shipped migration looks different and refuses when one is missing.</p>
+</aside>
+<h2 id="what-happens-while-two-versions-run"><a class="anchor" href="#what-happens-while-two-versions-run" aria-label="Link to this section">#</a>What happens while two versions run</h2>
+<p>When you deploy, especially as a <a href="https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/" target="_blank" rel="noopener">gradual deployment</a>, old and new code run at the same time:</p>
+<ul>
+<li>Each actor instance runs <strong>one</strong> code version at a time. While you only increase the new version&#39;s share, an instance never moves back to the old version.</li>
+<li>The Worker that calls an actor can run a different version from the actor. A Worker on the old version can call an actor already on the new one, and the other way round.</li>
+<li>Calls that old code scheduled run on whatever version the instance has when they fire.</li>
+</ul>
+<p>Actors handles each of these:</p>
+<div class="table-wrap"><table><thead><tr><th>Situation</th><th>What happens</th></tr></thead><tbody><tr><td>New code, old state</td><td>The state migrates on the instance&#39;s next call.</td></tr>
+<tr><td>Old code, newer state (after a rollback)</td><td>The call fails with kind <code>version</code>: &quot;saved by newer code&quot;. Nothing is changed or downgraded. Scheduled calls wait and retry without using up their attempts.</td></tr>
+<tr><td>A caller on another version asks for an action this version doesn&#39;t have</td><td>The call fails with kind <code>version</code>, naming both code versions.</td></tr>
+<tr><td>You remove or change an action that the last shipped version had</td><td><code>actors deploy</code> and <code>actors upload</code> refuse before anything ships.</td></tr></tbody></table></div>
+<h2 id="only-go-forward"><a class="anchor" href="#only-go-forward" aria-label="Link to this section">#</a>Only go forward</h2>
+<p>Migrations have no &quot;down&quot; step. If a release with a migration goes wrong, don&#39;t roll back: ship a fix forward, with another migration if the state needs repairing. Instances that already migrated refuse older code, so a rollback past a migration makes them fail until you deploy forward again.</p>
+<h2 id="keep-actions-compatible-until-the-old-version-is-gone"><a class="anchor" href="#keep-actions-compatible-until-the-old-version-is-gone" aria-label="Link to this section">#</a>Keep actions compatible until the old version is gone</h2>
+<p>Treat actions like a public API, because during a deploy they are one:</p>
+<ul>
+<li><strong>Adding</strong> an action is always safe.</li>
+<li><strong>Changing</strong> an action&#39;s arguments breaks callers that still send the old ones. Add a new action (<code>addV2</code>) instead.</li>
+<li><strong>Removing</strong> an action breaks callers on the previous version and calls it has already scheduled. Remove it in a later deploy, once no Worker version that calls it is deployed.</li>
+</ul>
+<p>You don&#39;t have to remember this. <code>actors deploy</code> compares your actors with the version you last shipped (recorded in <code>actors.lock.json</code>, which you commit) and stops on changes that would break callers still on that version. When the old version is gone, ship the change with <code>--allow-breaking</code>.</p>
+<p>It reads your actions&#39; types with the TypeScript compiler and compares their structure, not their names, so renaming a type or turning a <code>type</code> into an <code>interface</code> isn&#39;t a change:</p>
+<div class="table-wrap"><table><thead><tr><th>Change</th><th>Result</th></tr></thead><tbody><tr><td>Add an action, or an optional argument at the end</td><td>✅ Compatible</td></tr>
+<tr><td>Widen an argument (<code>string</code> → <code>string | number</code>, <code>&quot;a&quot; | &quot;b&quot;</code> → <code>&quot;a&quot; | &quot;b&quot; | &quot;c&quot;</code>)</td><td>✅ Compatible</td></tr>
+<tr><td>Return an extra property, or make a sync action async</td><td>✅ Compatible</td></tr>
+<tr><td>Remove an actor, an action or an argument</td><td>🔴 Breaking</td></tr>
+<tr><td>Change an argument&#39;s type, or add a required argument or property</td><td>🔴 Breaking</td></tr>
+<tr><td>Make an optional argument or property required</td><td>🔴 Breaking</td></tr>
+<tr><td>Return something old callers don&#39;t expect (<code>number</code> → <code>number | null</code>, a new literal)</td><td>🔴 Breaking</td></tr>
+<tr><td>Remove a migration</td><td>🔴 Breaking</td></tr></tbody></table></div>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors deploy</code></pre></figure>
+<figure class="code"><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-plaintext">actors: Breaking changes compared with the version last shipped (actors.lock.json):
+  - Cart.checkout(): argument 1 changed from { coupon?: string | undefined } to { coupon: string } (property &quot;coupon&quot; became required).
+    Callers on the previous version still send the old shape. Add a new action instead (e.g. checkoutV2) and remove this one later.
+  - Cart.applyCoupon() was removed. Workers on the previous version, and calls it scheduled, still call it.</code></pre></figure>
+<p>What it can&#39;t see: arguments typed <code>any</code> or <code>unknown</code>, and changes in meaning that keep the same type. Without TypeScript in the project (plain JavaScript), it only counts arguments.</p>
+<h2 id="ship-gradually"><a class="anchor" href="#ship-gradually" aria-label="Link to this section">#</a>Ship gradually</h2>
+<p><code>actors upload</code> runs the same checks, then uploads a new version without deploying it. Roll it out with Wrangler:</p>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">actors upload --tag v2</code></pre></figure>
+<figure class="code has-title"><figcaption><span>Terminal</span></figcaption><button class="copy" type="button" aria-label="Copy code">Copy</button><pre><code class="hljs language-bash">npx wrangler versions deploy</code></pre></figure>
+<p>Changes that add or remove a Durable Object class (the <code>migrations</code> in <code>wrangler.jsonc</code>, not actor migrations) can&#39;t roll out gradually. <code>actors upload</code> refuses them; ship them with <code>actors deploy</code> on their own first. Actor types never need one, because every actor runs in the same class.</p>
+<h2 id="see-which-version-did-what"><a class="anchor" href="#see-which-version-did-what" aria-label="Link to this section">#</a>See which version did what</h2>
+<p>Every call records the code version that ran it: the version tag if you set one (<code>--tag v2</code>), otherwise the start of the version id. In the <a href="../reference/cli.html#actor-explorer">Actor Explorer</a> and <code>actors inspect</code>:</p>
+<ul>
+<li>The activity timeline shows the code version of each call, marks where it changes, and shows migrations as their own entries (<code>migrate schema 0 → 2</code>).</li>
+<li>A call from a Worker on another version is marked <code>called from &lt;version&gt;</code>.</li>
+<li>The header shows the instance&#39;s schema, and whether it will migrate on its next call or was saved by newer code.</li>
+<li>The list shows how many instances each code version last served.</li>
+</ul>
+<p>Locally, each <code>actors dev</code> start counts as a new code version, so restarting with changed code shows the same timeline you&#39;d see after a deploy.</p>
+<h2 id="related-resources"><a class="anchor" href="#related-resources" aria-label="Link to this section">#</a>Related resources</h2>
+<ul>
+<li><a href="../api/actor.html"><code>actor()</code>: <code>migrations</code></a></li>
+<li><a href="../api/errors.html">Errors: kind <code>version</code></a></li>
+<li><a href="../reference/cli.html">CLI: <code>deploy</code>, <code>upload</code>, <code>check</code></a></li>
+<li><a href="../semantics.html#versions-and-migrations">Semantics: versions and migrations</a></li>
+</ul>
+</article>
+    <p class="meta">Last built Nov 17, 2026 · <a href="https://github.com/markdembo/actors-poc/blob/main/docs/best-practices/changing-actors.md" target="_blank" rel="noopener">View source ↗</a></p>
+    <nav class="pager" aria-label="Pagination"><a class="prev" href="websockets.html"><span>Previous</span>WebSockets</a><a class="next" href="../api/index.html"><span>Next</span>API reference</a></nav>
+    <footer class="footer">Generated by AI as part of an experimental proof of concept. No warranty, no support. MIT licensed.</footer>
+  </main>
+  <aside class="toc" aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="d2"><a href="#change-the-shape-of-state-with-migrations">Change the shape of state with migrations</a></li><li class="d2"><a href="#what-happens-while-two-versions-run">What happens while two versions run</a></li><li class="d2"><a href="#only-go-forward">Only go forward</a></li><li class="d2"><a href="#keep-actions-compatible-until-the-old-version-is-gone">Keep actions compatible until the old version is gone</a></li><li class="d2"><a href="#ship-gradually">Ship gradually</a></li><li class="d2"><a href="#see-which-version-did-what">See which version did what</a></li><li class="d2"><a href="#related-resources">Related resources</a></li></ul></aside>
+</div>
+<script src="../assets/site.js"></script>
+</body>
+</html>

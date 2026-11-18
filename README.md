@@ -164,6 +164,23 @@ Only `extends DurableObject` is discovered. For classes with other base classes 
 
 Read [docs/semantics.md](docs/semantics.md) before you put side effects in actions.
 
+### Migrations and versions
+
+When the shape of state changes, append a migration. Each instance runs the ones it is missing on its next call, in one transaction, before the action:
+
+```ts
+export const Cart = actor({
+  state: { items: [] as Item[], currency: "USD" },  // always the latest shape
+  migrations: [
+    ({ lines, ...s }) => ({ ...s, items: lines }),   // 1: lines → items
+    (s) => ({ ...s, currency: "USD" }),              // 2: add currency
+  ],
+  actions: { /* ... */ },
+});
+```
+
+Migrations only go forward. Code with fewer migrations than an instance has run refuses it instead of corrupting it, so fix problems by deploying forward. While a deploy rolls out, old and new code call each other: `actors deploy` and `actors upload` compare your actions' TypeScript types with the version last shipped and refuse a removed action, an argument old callers can no longer send, or a return value they wouldn't understand, until you pass `--allow-breaking`. Every call records which code version ran it, and the Explorer shows migrations, version changes and calls from other versions. See [Changing actors safely](docs/best-practices/changing-actors.md).
+
 ## API
 
 ```ts
@@ -173,6 +190,7 @@ actor({
   actions: { [name]: (ctx: ActionContext<S>, ...args) => R | Promise<R> },
   onCreate?: (ctx) => void | Promise<void>,     // first call only, same transaction
   validate?: (state: S) => void,                // throw to reject a commit (e.g. zod .parse)
+  migrations?: ((old, { actor, key, sql }) => object)[], // append-only; run lazily, in order, on the next call
   redact?: { state?: (keyof S)[], args?: (keyof actions)[] }, // hidden from dev tooling
 })
 
@@ -184,16 +202,18 @@ Actor.connect(key, request, { data? }) → Promise<Response>   // WebSocket upgr
 connections: { data?: typed<C>(), onConnect?(ctx, conn), onMessage?(ctx, conn, message), onClose?(ctx, conn, { code, reason, wasClean }) }
 conn: { id, data, send(msg), close(code?, reason?) }
 
-ActorError { kind: "action" | "validation" | "config" | "transport" | "timeout", code?, actor, key, method, remoteName?, remoteStack?, retryable }
+ActorError { kind: "action" | "validation" | "config" | "transport" | "timeout" | "version", code?, actor, key, method, remoteName?, remoteStack?, retryable }
 ```
 
 ## CLI
 
 | Command | Does |
 |---|---|
-| `actors generate` | Finds `export const X = actor(` and `export class X extends DurableObject` under `src/`, then writes `.actors/entry.ts`, `.actors/entry.dev.ts` and `manifest.json`. In `wrangler.jsonc` it adds the `ACTORS` binding, the one-time migration, and a binding and migration per Durable Object class, keeping your other keys and comments. Deterministic. |
+| `actors generate` | Finds `export const X = actor(` and `export class X extends DurableObject` under `src/`, then writes `.actors/entry.ts`, `.actors/entry.dev.ts` and `manifest.json`. In `wrangler.jsonc` it adds the `ACTORS` binding, the one-time migration, the `CF_VERSION_METADATA` binding, and a binding and migration per Durable Object class, keeping your other keys and comments. Deterministic. |
 | `actors dev [wrangler args]` | `generate`, then `wrangler dev .actors/entry.dev.ts`. Re-runs discovery when `src/` changes. |
-| `actors deploy [wrangler args]` | `generate`, then `wrangler deploy` (e.g. `--dry-run`). The production entry has no explorer and no admin routes. |
+| `actors deploy [wrangler args]` | `generate`, the compatibility check, then `wrangler deploy` (e.g. `--dry-run`). The production entry has no explorer and no admin routes. Writes `actors.lock.json` (commit it). |
+| `actors upload [wrangler args]` | Same, but `wrangler versions upload` for a gradual deployment (`--tag v2` names the version). |
+| `actors check` | Compares actors, actions (with their TypeScript argument and return types) and migrations with `actors.lock.json`, and fails on changes that break callers still on the previous version. |
 | `actors inspect <Type> <key>` | State, recent invocations with errors and logs, schedules, storage and runtime info. Needs `actors dev`. Persisted data is read through Wrangler's Local Explorer API. `--json` for machines. |
 | `actors list` | Actor types, their actions, and every instance in local storage. |
 
@@ -205,11 +225,12 @@ ActorError { kind: "action" | "validation" | "config" | "transport" | "timeout",
 pnpm test
 ```
 
-This runs typecheck, the type tests and the e2e suite: 34 end-to-end checks against real `workerd`.
+This runs typecheck, the type tests, the compatibility-check tests and the e2e suite: 42 end-to-end checks against real `workerd`.
 - **Actors:** restart persistence, rollback, 100-way concurrency, FIFO ordering, timeouts, alarms and redaction.
 - **WebSockets:** typed hooks, sends that wait for the save, a rolled-back hook sending nothing, broadcasts from actions, `onClose`, refusing connections, and client-forged headers being ignored.
 - **Raw Durable Objects:** zero-config wiring with `durable()`, browsing their tables, and the warnings for removed classes and binding clashes.
 - **Explorer:** lists instances through Wrangler's Local Explorer, inspecting an unknown key or id creates nothing, inspect answers while an action is running, and it is localhost-only.
+- **Migrations and versions:** the same stored data under code with 0, 2, 1 and 3 migrations: lazy migration with `ctx.sql`, new instances skipping migrations, older code refusing newer state, a failing migration rolling back and retrying; version errors for callers on another version; `actors check` catching breaking changes.
 - **Builds:** a production build without dev tooling, and deterministic generation.
 
 ```bash

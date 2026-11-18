@@ -12,6 +12,7 @@ my-app/
 │   ├── actors/*.ts       # actors: export const X = actor({...})   (any folder under src/ works)
 │   └── *.ts              # optional custom classes: export class X extends DurableObject
 ├── wrangler.jsonc        # yours, with a few keys managed by `actors generate`
+├── actors.lock.json      # written by `actors deploy`: the actor API last shipped. Commit it.
 └── .actors/              # generated, add to .gitignore
 ```
 
@@ -27,8 +28,9 @@ The Worker entry must be `src/index.ts` (or `src/index.js`, `src/worker.ts`, `sr
 | `compatibility_date` | Set to `2026-09-01` if missing. Must be `2024-04-03` or later. |
 | `durable_objects.bindings` | Adds `ACTORS` → `ActorHost`, and one binding per custom class |
 | `migrations` | Adds `actors-v1` (`ActorHost`) once, and `actors-do-<Class>` per custom class |
+| `version_metadata` | Adds `CF_VERSION_METADATA`, so each call records the code version that ran it |
 
-The binding name `ACTORS` and the class name `ActorHost` are reserved. Because `wrangler.jsonc` stays a normal Wrangler file, `wrangler secret put`, `wrangler tail` and the rest work without extra flags.
+The binding name `ACTORS` and the class name `ActorHost` are reserved. Actors reads the version metadata binding as `CF_VERSION_METADATA`; if you already bind it under another name, `generate` warns and code versions aren't recorded. Because `wrangler.jsonc` stays a normal Wrangler file, `wrangler secret put`, `wrangler tail` and the rest work without extra flags.
 
 ## Environment variables
 

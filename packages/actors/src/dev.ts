@@ -181,6 +181,8 @@ function parseName(name: string | undefined, registry: Record<string, AnyActor>)
 const STATS_SQL = `SELECT
   (SELECT created_at FROM _actor_state) AS created_at,
   (SELECT updated_at FROM _actor_state) AS updated_at,
+  (SELECT schema FROM _actor_state) AS schema,
+  (SELECT code_version FROM _actor_log ORDER BY id DESC LIMIT 1) AS code_version,
   (SELECT COUNT(*) FROM _actor_log) AS invocations,
   (SELECT COUNT(*) FROM _actor_log WHERE ok = 0) AS errors,
   (SELECT MIN(ts) FROM _actor_log) AS first_ts,
@@ -193,7 +195,9 @@ async function listInstances(le: LocalExplorer, registry: Record<string, AnyActo
     .filter((x): x is { o: LocalObject; id: { actor: string; key: string } } => !!x.id);
 
   const withStats = await mapLimit(objects, 16, async ({ o, id }, i) => {
-    if (i >= STATS_LIMIT) return { ...id, exists: null, firstSeen: null, lastSeen: null, invocations: null, errors: null };
+    if (i >= STATS_LIMIT) {
+      return { ...id, exists: null, firstSeen: null, lastSeen: null, invocations: null, errors: null, schema: null, codeVersion: null };
+    }
     let r: Row | undefined;
     try {
       r = (await le.query(o.name!, [{ sql: STATS_SQL }]))[0][0];
@@ -211,6 +215,10 @@ async function listInstances(le: LocalExplorer, registry: Record<string, AnyActo
       lastSeen: last.length ? Math.max(...last) : null,
       invocations: num(r?.invocations) ?? 0,
       errors: num(r?.errors) ?? 0,
+      /** Migrations the state has run. */
+      schema: num(r?.schema),
+      /** Code version of the most recent logged call. */
+      codeVersion: r?.code_version == null ? null : String(r.code_version),
     };
   });
   return withStats.filter((x) => x !== null).sort(
@@ -233,14 +241,14 @@ async function inspect(
   if (!known) {
     // Don't query: that would create an empty object for a key that was never used.
     return {
-      exists: false, actor, key, invocations: [], schedules: [],
+      exists: false, actor, key, latestSchema: latestSchema(registry, actor), invocations: [], schedules: [],
       storage: { databaseSizeBytes: 0, stateBytes: 0 }, lifecycle: null,
       source: "wrangler-local-explorer",
     };
   }
 
   const [[stateRow], logRows, scheduleRows] = await le.query(name, [
-    { sql: "SELECT state, version, created_at, updated_at, length(CAST(state AS BLOB)) AS bytes FROM _actor_state" },
+    { sql: "SELECT state, version, schema, created_at, updated_at, length(CAST(state AS BLOB)) AS bytes FROM _actor_state" },
     { sql: "SELECT * FROM _actor_log ORDER BY id DESC LIMIT 50" },
     { sql: "SELECT id, at, action, args, attempts FROM _actor_schedule ORDER BY at" },
   ]);
@@ -260,6 +268,8 @@ async function inspect(
     state,
     redacted: redact,
     version: stateRow ? Number(stateRow.version) : undefined,
+    schema: stateRow ? Number(stateRow.schema ?? 0) : undefined,
+    latestSchema: latestSchema(registry, actor),
     createdAt: stateRow ? Number(stateRow.created_at) : undefined,
     updatedAt: stateRow ? Number(stateRow.updated_at) : undefined,
     invocations: logRows.map((r): InvocationRecord => toInvocationRecord(r)),
@@ -274,6 +284,10 @@ async function inspect(
     lifecycle: { ...lifecycle, note },
     source: "wrangler-local-explorer",
   };
+}
+
+function latestSchema(registry: Record<string, AnyActor>, actor: string) {
+  return registry[actor]?.__config.migrations?.length ?? 0;
 }
 
 // ───────────────────────────── raw Durable Objects (read-only) ─────────────────────────────
